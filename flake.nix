@@ -43,6 +43,21 @@
             setuptools = [];
           };
         });
+        llvmlite = _prev.llvmlite.overrideAttrs (oldAttrs: {
+          nativeBuildInputs = oldAttrs.nativeBuildInputs ++ _prev.resolveBuildSystem {
+            setuptools = [];
+          };
+        });
+        numba = _prev.numba.overrideAttrs (oldAttrs: {
+          nativeBuildInputs = oldAttrs.nativeBuildInputs ++ _prev.resolveBuildSystem {
+            setuptools = [];
+          };
+        });
+        pyperclip = _prev.pyperclip.overrideAttrs (oldAttrs: {
+          nativeBuildInputs = oldAttrs.nativeBuildInputs ++ _prev.resolveBuildSystem {
+            setuptools = [];
+          };
+        });
       };
 
       # Construct package set
@@ -79,7 +94,6 @@
           pkgs.mkShell {
             packages = [
               virtualenv
-              pkgs.uv
             ];
 
             env = {
