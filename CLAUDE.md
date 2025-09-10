@@ -8,27 +8,26 @@ Trigent is a GitHub issue triaging agent designed to help manage thousands of is
 
 ## Architecture
 
-The system consists of four main Python packages under `src/`:
+The system consists of four main Python packages under `trigent/`:
 
-### 1. Data Pulling (src/trigent-pull/)
+### 1. Data Pulling (trigent/pull/)
 - Python package that pulls raw issues from GitHub repositories
 - Uses `gh` CLI for GitHub API access
 - Saves raw data as gzipped JSON in /data folder
 
-### 2. Data Enrichment (src/trigent-enrich/)
+### 2. Data Enrichment (trigent/enrich/)
 - Python package that processes raw issue data
 - Adds embeddings for semantic search (via Mistral API)
 - Computes metrics: reactions, comments, age, activity scores
 - Assigns quartiles for all metrics using pandas `qcut()`
-- Generates UMAP 2D projections for visualization
 - Saves enriched data as gzipped JSON in /data folder
 
-### 3. MCP Server (src/trigent-mcp/)
+### 3. MCP Server (trigent/mcp/)
 - FastMCP server providing database access tools
 - Serves enriched issue data to AI agents
 - Tools: get_issue, find_similar_issues, find_linked_issues, get_issue_metrics
 
-### 4. CLI Orchestration (src/trigent-cli/)
+### 4. CLI Orchestration (trigent/cli/)
 - Python CLI for coordinating all components
 - Unified `trigent` command with subcommands
 - Orchestrates the entire workflow from pull to triaging
@@ -61,32 +60,31 @@ pip install -e ".[dev]"
 
 ### Code Quality
 ```bash
-ruff check src/ && ruff format src/ && mypy src/
+ruff check trigent/ && ruff format trigent/ && mypy trigent/
 ```
 
 ## Key Files
 
-- `src/trigent-cli/cli.py`: Main CLI entry point with all subcommands
-- `src/trigent-pull/pull.py`: Python module for fetching raw issues from GitHub
-- `src/trigent-enrich/enrich.py`: Python enrichment pipeline with embeddings/metrics
-- `src/trigent-mcp/mcp_server.py`: FastMCP server for database access
-- `pyproject.toml`: Project configuration with src layout
+- `trigent/cli/cli.py`: Main CLI entry point with all subcommands
+- `trigent/pull/pull.py`: Python module for fetching raw issues from GitHub
+- `trigent/enrich/enrich.py`: Python enrichment pipeline with embeddings/metrics
+- `trigent/mcp/mcp_server.py`: FastMCP server for database access
+- `pyproject.toml`: Project configuration
 
 ## Dependencies
 
 - **Python 3.11+**: Core language with modern type hints
 - **pandas, numpy**: Data processing and quartile calculations
-- **umap-learn**: Dimensionality reduction for embeddings
 - **requests**: HTTP client for Mistral API
 - **FastMCP**: Minimal server for database access
-- **subprocess**: For calling `gh` CLI
+- **subprocess**: Only for calling `gh` CLI in pull module
 - **Claude Code**: AI agent for triaging
 
 ## Architecture Notes
 
-- **Unified Python**: All components now in Python with clean package separation
-- **Raw Data**: GitHub issues fetched via Python subprocess calling `gh` CLI
-- **Enriched Data**: Pandas-based processing adds embeddings, quartiles, UMAP projections
+- **Unified Python**: All components integrated in single Python package with clean module separation
+- **Raw Data**: GitHub issues fetched via `gh` CLI subprocess in pull module only
+- **Enriched Data**: Pandas-based processing adds embeddings and quartiles (UMAP removed)
 - **MCP Server**: FastMCP provides 4 tools for Claude Code agent access
-- **CLI Integration**: Single `trigent` command orchestrates entire pipeline
-- **Src Layout**: Clean package structure under `src/` following Python best practices
+- **CLI Integration**: Single `trigent` command orchestrates entire pipeline with direct Python imports
+- **Direct Integration**: No subprocess calls between internal modules - all use direct Python imports

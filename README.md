@@ -4,62 +4,70 @@ Efficiently triage thousands of GitHub issues using semantic analysis and AI dec
 
 ## Quick Start
 
-```nu
-use trigent
+```bash
+# Install the package
+pip install -e .
 
-# 1. Create rich issue database with embeddings
-trigent pull jupyterlab/jupyterlab --api-key $MISTRAL_API_KEY
+# 1. Pull raw issue data
+trigent pull jupyterlab/jupyterlab --limit 100
 
-# 2. Start MCP server for database access  
+# 2. Enrich data with embeddings and metrics
+trigent enrich data/raw-issues-jupyterlab-jupyterlab.json.gz --api-key $MISTRAL_API_KEY
+
+# 3. Start MCP server for database access
 trigent mcp &
 
-# 3. Launch Claude Code agent to process issues
-trigent agent --priority-order --limit 10
+# 4. Process issues with Claude Code agent  
+trigent agent --priority-order --limit 5
 ```
 
 ## Architecture
 
-### 1. Rich Issue Database (nushell)
-Fetches GitHub issues via `gh` CLI and enriches with:
-- **Embeddings**: Mistral API embeddings of title + body + comments for semantic similarity
-- **Reaction metrics**: Positive/negative reaction counts across issue and comments
-- **Engagement heuristics**: Comment frequency, age, priority scores
-- **Link detection**: Extract referenced issue numbers (#1234)
+### 1. Data Pulling (`trigent/pull/`)
+- Python module that pulls raw issues from GitHub repositories
+- Uses `gh` CLI for GitHub API access
+- Saves raw data as gzipped JSON in /data folder
 
-Output: Compressed JSON database with all enrichment data.
+### 2. Data Enrichment (`trigent/enrich/`)
+- Python module that processes raw issue data
+- Adds embeddings for semantic search (via Mistral API)
+- Computes metrics: reactions, comments, age, activity scores
+- Assigns quartiles for all metrics using pandas `qcut()`
+- Saves enriched data as gzipped JSON in /data folder
 
-### 2. Rich Issues MCP Server (Python)
-Minimal FastMCP server providing focused tools:
-- `get_issue(number)` - Full issue details and metadata
-- `find_similar_issues(number)` - Semantic similarity via embeddings  
-- `find_linked_issues(number)` - Explicitly referenced issues
-- `get_issue_metrics(number)` - Priority/engagement scores
+### 3. MCP Server (`trigent/mcp/`)
+- FastMCP server providing database access tools
+- Serves enriched issue data to AI agents
+- Tools: get_issue, find_similar_issues, find_linked_issues, get_issue_metrics
 
-### 3. AI Triaging Agent (Claude Code)
-Processes issues individually with MCP context access. For each issue, proposes:
-- **"close as done"** - Issue appears resolved
-- **"close as duplicate"** - Duplicate of existing issue
-- **"keep open"** - Requires continued attention
+### 4. CLI Orchestration (`trigent/cli/`)
+- Python CLI for coordinating all components
+- Unified `trigent` command with subcommands
+- Orchestrates the entire workflow from pull to triaging
 
-For "keep open" decisions, evaluates solution paths on:
-- **Simplicity vs Impact**: Easy fixes vs. broad solutions
-- **Risk assessment**: Likelihood of breaking changes
-- **Issue clustering**: Solutions affecting multiple related issues
+## Key Features
+
+- **Semantic Similarity**: Mistral API embeddings of title + body + comments
+- **Reaction Metrics**: Positive/negative reaction counts across issue and comments
+- **Engagement Heuristics**: Comment frequency, age, activity scores
+- **Link Detection**: Extract referenced issue numbers (#1234)
+- **Quartile Analysis**: Statistical distribution of all metrics
 
 ## Files
 
-- `trigent/mod.nu` - Main module with subcommand exports
-- `trigent/pull.nu` - Database creation with enrichment  
-- `trigent/agent.nu` - Agent orchestration system
-- `trigent/mcp.nu` - MCP server launcher
-- `trigent-mcp/mcp_server.py` - MCP server for database access
+- `trigent/cli/cli.py` - Main CLI entry point with all subcommands
+- `trigent/pull/pull.py` - Python module for fetching raw issues from GitHub
+- `trigent/enrich/enrich.py` - Python enrichment pipeline with embeddings/metrics
+- `trigent/mcp/mcp_server.py` - FastMCP server for database access
+- `pyproject.toml` - Project configuration
 
 ## Dependencies
 
-- **nushell** - Database creation and orchestration
+- **Python 3.11+** - Core language with modern type hints
+- **pandas, numpy** - Data processing and quartile calculations
+- **requests** - HTTP client for Mistral API
+- **FastMCP** - Minimal server for database access
 - **gh CLI** - GitHub issue fetching
-- **Mistral API** - Embeddings generation
-- **Claude Code** - AI triaging agent
-- **FastMCP** - MCP server framework
+- **Claude Code** - AI agent for triaging
 
 Designed for large-scale issue management with minimal dependencies and maximum efficiency.
