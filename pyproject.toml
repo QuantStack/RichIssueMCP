@@ -44,7 +44,7 @@ dev = [
 
 
 [tool.hatch.version]
-path = "src/trigent-mcp/__init__.py"
+path = "trigent/mcp/__init__.py"
 
 [tool.ruff]
 target-version = "py311"
@@ -63,13 +63,13 @@ ignore = [
 ]
 
 [tool.ruff.isort]
-known-first-party = ["trigent-pull", "trigent-enrich", "trigent-mcp", "trigent-cli"]
+known-first-party = ["trigent.pull", "trigent.enrich", "trigent.mcp", "trigent.cli"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/trigent-pull", "src/trigent-enrich", "src/trigent-mcp", "src/trigent-cli"]
+packages = ["trigent"]
 
 [project.scripts]
-trigent = "src.trigent-cli.cli:main"
+trigent = "trigent.cli.cli:main"
 
 [tool.black]
 target-version = ["py311"]
