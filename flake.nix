@@ -20,7 +20,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, pyproject-nix, uv2nix, pyproject-build-systems }:
+  outputs = inputs@{ self, nixpkgs, pyproject-nix, uv2nix, pyproject-build-systems }:
      let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -73,9 +73,7 @@
               pyprojectOverrides
             ]
           );
-    in
-    {
-      devShells.${system} = {
+       devShell = {
         default =
           let
             # Create an overlay enabling editable mode for all local dependencies.
@@ -116,5 +114,19 @@
             '';
           };
         };
-      };
+    in
+    {
+      packages.${system} = {
+        closureInfo = pkgs.closureInfo {
+          rootPaths = [self.devShells.${system}.default] ++
+       (builtins.attrValues (builtins.mapAttrs (name: value: value.outPath) inputs));};
+        registerClosureScript = (
+        pkgs.writeShellScriptBin "register-trigent-closure" ''
+          #!/usr/bin/env bash
+          echo "Registering Trigent development environment closure..."
+          sudo nix-store --load-db < ${self.packages.${system}.closureInfo}/registration
+          '');
+        };
+      devShells.${system} = devShell;
+    };
 }

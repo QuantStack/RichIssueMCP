@@ -29,6 +29,8 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "requests>=2.28.0",
+    "ipython>=9.5.0",
+    "ipdb>=0.13.13",
 ]
 
 [project.optional-dependencies]
