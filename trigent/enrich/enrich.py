@@ -11,6 +11,8 @@ from typing import Any
 import pandas as pd
 import requests
 
+from trigent.config import get_config
+
 
 def load_raw_issues(filepath: Path) -> list[dict[str, Any]]:
     """Load raw issues from gzipped JSON file."""
@@ -201,7 +203,6 @@ def main():
         description="Enrich raw GitHub issues with metrics and embeddings"
     )
     parser.add_argument("input_file", help="Path to raw issues JSON.gz file")
-    parser.add_argument("--api-key", help="Mistral API key for embeddings")
     parser.add_argument(
         "--model", default="mistral-embed", help="Mistral embedding model"
     )
@@ -229,8 +230,14 @@ def main():
     raw_issues = load_raw_issues(input_path)
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
+    # Get API key from config
+    config = get_config()
+    api_key = config.get("api", {}).get("mistral_api_key")
+    if not api_key:
+        raise ValueError("Mistral API key required in config.toml [api] section")
+
     # Enrich issues
-    enriched = [enrich_issue(issue, args.api_key, args.model) for issue in raw_issues]
+    enriched = [enrich_issue(issue, api_key, args.model) for issue in raw_issues]
 
     print("🔧 Computing quartile assignments...")
     enriched = add_quartile_columns(enriched)

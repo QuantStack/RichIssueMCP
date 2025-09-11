@@ -1,4 +1,5 @@
 jupyterlab
 data
 **/__pycache__
+config.toml
 

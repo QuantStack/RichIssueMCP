@@ -14,13 +14,20 @@ from trigent.enrich.enrich import (
 )
 from trigent.mcp.mcp_server import run_mcp_server
 from trigent.pull.pull import fetch_issues, save_raw_issues
+from trigent.config import get_config
 
 
 def cmd_pull(args):
     """Execute pull command."""
     print(f"🔍 Fetching issues from {args.repo}...")
 
-    raw_issues = fetch_issues(args.repo, args.include_closed, args.limit)
+    raw_issues = fetch_issues(
+        repo=args.repo,
+        include_closed=args.include_closed,
+        limit=args.limit,
+        start_date=getattr(args, "start_date", "2025-01-01"),
+        refetch=getattr(args, "refetch", False),
+    )
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
     # Determine output path
@@ -53,8 +60,14 @@ def cmd_enrich(args):
     raw_issues = load_raw_issues(input_path)
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
+    # Get API key from config
+    config = get_config()
+    api_key = config.get("api", {}).get("mistral_api_key")
+    if not api_key:
+        raise ValueError("Mistral API key required in config.toml [api] section")
+
     # Enrich issues
-    enriched = [enrich_issue(issue, args.api_key, args.model) for issue in raw_issues]
+    enriched = [enrich_issue(issue, api_key, args.model) for issue in raw_issues]
 
     print("🔧 Computing quartile assignments...")
     enriched = add_quartile_columns(enriched)
@@ -96,6 +109,14 @@ def main():
     )
     pull_parser.add_argument("--limit", "-l", type=int, help="Limit number of issues")
     pull_parser.add_argument("--output", help="Output file path")
+    pull_parser.add_argument(
+        "--start-date",
+        default="2025-01-01",
+        help="Start date for fetching issues (YYYY-MM-DD)",
+    )
+    pull_parser.add_argument(
+        "--refetch", action="store_true", help="Refetch all issues from start date"
+    )
     pull_parser.set_defaults(func=cmd_pull)
 
     # Enrich command
@@ -103,7 +124,6 @@ def main():
         "enrich", help="Enrich raw issues with embeddings and metrics"
     )
     enrich_parser.add_argument("input_file", help="Path to raw issues JSON.gz file")
-    enrich_parser.add_argument("--api-key", help="Mistral API key")
     enrich_parser.add_argument("--model", default="mistral-embed", help="Mistral model")
     enrich_parser.add_argument("--output", help="Output file path")
     enrich_parser.add_argument(

@@ -11,8 +11,11 @@ Trigent is a GitHub issue triaging agent designed to help manage thousands of is
 The system consists of four main Python packages under `trigent/`:
 
 ### 1. Data Pulling (trigent/pull/)
-- Python package that pulls raw issues from GitHub repositories
-- Uses `gh` CLI for GitHub API access
+- Python package that pulls raw issues from GitHub repositories using intelligent paging
+- Uses `gh` CLI for GitHub API access with weekly chunking based on `updatedAt` timestamps
+- Implements incremental updates to avoid refetching unchanged issues
+- Maintains state tracking in `data/state-{repo}.json` for last fetch timestamps
+- Merges new/updated issues with existing data while preserving all information
 - Saves raw data as gzipped JSON in /data folder
 
 ### 2. Data Enrichment (trigent/enrich/)
@@ -38,8 +41,14 @@ The system consists of four main Python packages under `trigent/`:
 # Install the package
 pip install -e .
 
-# 1. Pull raw issue data
-trigent pull jupyterlab/jupyterlab --limit 100
+# 1. Pull raw issue data (intelligent paging from 2025-01-01)
+trigent pull jupyterlab/jupyterlab --start-date 2025-01-01
+
+# 1a. Incremental update (only new/updated issues since last fetch)
+trigent pull jupyterlab/jupyterlab
+
+# 1b. Force full refetch from start date
+trigent pull jupyterlab/jupyterlab --refetch
 
 # 2. Enrich data with embeddings and metrics
 trigent enrich data/raw-issues-jupyterlab-jupyterlab.json.gz --api-key $MISTRAL_API_KEY
@@ -83,8 +92,10 @@ ruff check trigent/ && ruff format trigent/ && mypy trigent/
 ## Architecture Notes
 
 - **Unified Python**: All components integrated in single Python package with clean module separation
-- **Raw Data**: GitHub issues fetched via `gh` CLI subprocess in pull module only
+- **Intelligent Paging**: GitHub issues fetched via `gh` CLI with weekly chunking and incremental updates
+- **State Management**: Pull module tracks last fetch timestamps to enable efficient incremental updates
+- **Issue Merging**: Smart merge logic updates existing issues while preserving all data integrity  
 - **Enriched Data**: Pandas-based processing adds embeddings and quartiles (UMAP removed)
-- **MCP Server**: FastMCP provides 4 tools for Claude Code agent access
+- **MCP Server**: FastMCP provides 5 tools for Claude Code agent access (including get_top_issues)
 - **CLI Integration**: Single `trigent` command orchestrates entire pipeline with direct Python imports
 - **Direct Integration**: No subprocess calls between internal modules - all use direct Python imports

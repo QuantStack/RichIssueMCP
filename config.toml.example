@@ -1,0 +1,20 @@
+# Trigent Configuration File
+# Copy this file to config.toml and fill in your values
+
+[api]
+# Mistral API key for embeddings and AI processing
+mistral_api_key = "your-mistral-api-key-here"
+
+[github]
+# GitHub configuration (optional - defaults to gh CLI)
+# token = "your-github-token-here"
+
+[mcp]
+# MCP server configuration
+host = "localhost"
+port = 8000
+
+[processing]
+# Processing configuration
+batch_size = 100
+max_issues = 1000

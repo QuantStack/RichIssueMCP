@@ -9,11 +9,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 mcp = FastMCP("Rich Issues Server")
-_issues_cache: dict[str, list[dict]] = {}
+_issues_cache: dict[str, list[dict[str, Any]]] = {}
 _default_db_file = "data/enriched-issues-jupyterlab-jupyterlab.json.gz"
 
 
-def load_issues_db(db_file: str) -> list[dict]:
+def load_issues_db(db_file: str) -> list[dict[str, Any]]:
     """Load and cache issues from compressed JSON database."""
     if db_file in _issues_cache:
         return _issues_cache[db_file]
@@ -24,7 +24,7 @@ def load_issues_db(db_file: str) -> list[dict]:
 
     try:
         with gzip.open(db_path, "rt") as f:
-            issues = json.load(f)
+            issues: list[dict[str, Any]] = json.load(f)
         _issues_cache[db_file] = issues
         return issues
     except Exception as e:
@@ -130,6 +130,45 @@ def get_issue_metrics(
     }
 
 
+@mcp.tool()
+def get_top_issues(
+    sort_column: str,
+    limit: int = 10,
+    descending: bool = True,
+    db_file: str | None = None,
+) -> list[dict[str, Any]]:
+    """Get top n issues sorted by a specific column from the enriched database."""
+    if db_file is None:
+        db_file = _default_db_file
+    issues = load_issues_db(db_file)
+
+    if not issues:
+        return []
+
+    # Validate that the sort column exists
+    available_columns = set(issues[0].keys()) if issues else set()
+    if sort_column not in available_columns:
+        raise ValueError(
+            f"Column '{sort_column}' not found. Available columns: {sorted(available_columns)}"
+        )
+
+    # Filter out issues that don't have the sort column or have None values
+    valid_issues = [issue for issue in issues if issue.get(sort_column) is not None]
+
+    # Sort issues by the specified column
+    try:
+        sorted_issues = sorted(
+            valid_issues, key=lambda x: x[sort_column], reverse=descending
+        )
+    except TypeError:
+        # Handle case where values might not be comparable (mixed types)
+        sorted_issues = sorted(
+            valid_issues, key=lambda x: str(x[sort_column]), reverse=descending
+        )
+
+    return sorted_issues[:limit]
+
+
 def run_mcp_server(
     host: str = "localhost", port: int = 8000, db_file: str | None = None
 ) -> None:
@@ -139,14 +178,15 @@ def run_mcp_server(
     if db_file is None:
         db_file = "data/enriched-issues-jupyterlab-jupyterlab.json.gz"
 
-    print(f"🚀 Starting MCP server on {host}:{port}")
+    print("🚀 Starting MCP server")
     print(f"📂 Using database: {db_file}")
 
     # Update default db_file in all tool functions
     global _default_db_file
     _default_db_file = db_file
 
-    mcp.run(host=host, port=port)
+    # Run with stdio transport (default for MCP)
+    mcp.run()
 
 
 if __name__ == "__main__":
