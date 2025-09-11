@@ -33,6 +33,7 @@ dependencies = [
     "ipdb>=0.13.13",
     "toml>=0.10.0",
     "scikit-learn>=1.7.2",
+    "diskcache>=5.6.3",
 ]
 
 [project.optional-dependencies]
