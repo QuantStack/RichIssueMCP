@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Pull GitHub issues and save raw data."""
+"""Pull GitHub issues using updatedAt chunking."""
 
-import argparse
 import gzip
 import json
 import subprocess
@@ -12,22 +11,16 @@ from typing import Any
 
 def fetch_issues_chunk(
     repo: str,
+    updated_range: tuple[str, str],
     include_closed: bool = False,
-    limit: int | None = None,
-    updated_since: str | None = None,
-    updated_until: str | None = None,
+    limit: int | None = 500,
 ) -> list[dict[str, Any]]:
-    """Fetch a chunk of issues from GitHub using gh CLI with date filtering."""
+    """Fetch a chunk of issues from GitHub using gh CLI with updatedAt date filtering."""
     state = "all" if include_closed else "open"
-
-    # Build search query with date filters
-    search_parts = []
-    if updated_since:
-        search_parts.append(f"updated:>={updated_since}")
-    if updated_until:
-        search_parts.append(f"updated:<={updated_until}")
-
-    search_query = " ".join(search_parts) if search_parts else None
+    updated_since, updated_until = updated_range
+    
+    # Use GitHub's date range syntax with updatedAt field
+    search_query = f"updated:{updated_since}..{updated_until}"
 
     cmd = [
         "gh",
@@ -39,11 +32,10 @@ def fetch_issues_chunk(
         state,
         "--json",
         "number,title,body,state,createdAt,updatedAt,author,labels,assignees,url,comments,reactionGroups",
+        "--search",
+        search_query,
     ]
-
-    if search_query:
-        cmd.extend(["--search", search_query])
-
+    
     if limit is not None:
         cmd.extend(["--limit", str(limit)])
 
@@ -59,32 +51,13 @@ def fetch_issues_chunk(
         raise
 
 
-def load_state(state_file: Path) -> dict[str, Any]:
-    """Load state from JSON file."""
-    if not state_file.exists():
-        return {}
-
-    try:
-        with open(state_file) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def save_state(state: dict[str, Any], state_file: Path) -> None:
-    """Save state to JSON file."""
-    state_file.parent.mkdir(exist_ok=True)
-    with open(state_file, "w") as f:
-        json.dump(state, f, indent=2)
-
-
 def generate_date_ranges(
-    start_date: str, end_date: str | None = None
+    start_date: str, end_date: str | None = None, days: int = 7
 ) -> list[tuple[str, str]]:
-    """Generate weekly date ranges from start_date to end_date (or now)."""
+    """Generate date ranges from start_date to end_date (or now) in chunks of specified days."""
     start = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
     end = (
-        datetime.now()
+        datetime.now().replace(tzinfo=start.tzinfo)
         if end_date is None
         else datetime.fromisoformat(end_date.replace("Z", "+00:00"))
     )
@@ -93,9 +66,12 @@ def generate_date_ranges(
     current = start
 
     while current < end:
-        next_week = min(current + timedelta(days=7), end)
-        ranges.append((current.strftime("%Y-%m-%d"), next_week.strftime("%Y-%m-%d")))
-        current = next_week
+        next_chunk = min(current + timedelta(days=days), end)
+        ranges.append((
+            current.strftime("%Y-%m-%d"), 
+            next_chunk.strftime("%Y-%m-%d")
+        ))
+        current = next_chunk
 
     return ranges
 
@@ -104,91 +80,45 @@ def merge_issues(
     existing_issues: list[dict[str, Any]], new_issues: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Merge new issues with existing ones, updating duplicates based on issue number."""
-    # Create a mapping of issue number to issue for existing issues
     issue_map = {issue["number"]: issue for issue in existing_issues}
-
-    # Update with new issues
+    
     for issue in new_issues:
         issue_map[issue["number"]] = issue
 
-    # Return sorted by issue number
     return sorted(issue_map.values(), key=lambda x: x["number"])
 
 
 def fetch_issues(
     repo: str,
     include_closed: bool = False,
-    limit: int | None = None,
+    limit: int | None = 500,
     start_date: str = "2025-01-01",
-    refetch: bool = False,
+    chunk_days: int = 7,
 ) -> list[dict[str, Any]]:
-    """Fetch issues from GitHub using paged requests with weekly chunks."""
-    repo_name = repo.replace("/", "-")
-    state_file = Path("data") / f"state-{repo_name}.json"
-    output_file = Path("data") / f"raw-issues-{repo_name}.json.gz"
+    """Fetch issues from GitHub using updatedAt chunking with specified day ranges."""
+    
+    date_ranges = generate_date_ranges(start_date, days=chunk_days)
+    print(f"📊 Fetching issues in {len(date_ranges)} chunks of {chunk_days} days each")
 
-    # Load existing state and issues
-    state = load_state(state_file)
-    existing_issues = []
-
-    if not refetch and output_file.exists():
-        try:
-            with gzip.open(output_file, "rt", encoding="utf-8") as f:
-                existing_issues = json.load(f)
-            print(f"📂 Loaded {len(existing_issues)} existing issues")
-        except (OSError, json.JSONDecodeError) as e:
-            print(f"⚠️  Could not load existing issues: {e}")
-            existing_issues = []
-
-    # Determine start date for fetching
-    if refetch:
-        fetch_start_date = start_date
-        print(f"🔄 Full refetch requested, starting from {fetch_start_date}")
-    else:
-        fetch_start_date = state.get("last_updated_at", start_date)
-        print(f"📅 Incremental fetch from {fetch_start_date}")
-
-    # Generate date ranges for weekly chunks
-    date_ranges = generate_date_ranges(fetch_start_date)
-
-    if not date_ranges:
-        print("✅ No new date ranges to fetch")
-        return existing_issues
-
-    print(f"📊 Fetching {len(date_ranges)} weekly chunks")
-
-    all_new_issues = []
-    latest_updated_at = fetch_start_date
+    all_issues = []
 
     for i, (since_date, until_date) in enumerate(date_ranges, 1):
         print(f"🔍 Fetching chunk {i}/{len(date_ranges)}: {since_date} to {until_date}")
 
         chunk_issues = fetch_issues_chunk(
             repo=repo,
+            updated_range=(since_date, until_date),
             include_closed=include_closed,
             limit=limit,
-            updated_since=since_date,
-            updated_until=until_date,
         )
 
         print(f"  📥 Retrieved {len(chunk_issues)} issues")
-        all_new_issues.extend(chunk_issues)
+        all_issues.extend(chunk_issues)
 
-        # Track the latest updatedAt timestamp
-        for issue in chunk_issues:
-            if issue.get("updatedAt") and issue["updatedAt"] > latest_updated_at:
-                latest_updated_at = issue["updatedAt"]
-
-    print(f"📊 Total new/updated issues: {len(all_new_issues)}")
-
-    # Merge with existing issues
-    merged_issues = merge_issues(existing_issues, all_new_issues)
-    print(f"📋 Final issue count: {len(merged_issues)}")
-
-    # Update state
-    state["last_updated_at"] = latest_updated_at
-    state["last_fetch_time"] = datetime.now().isoformat()
-    save_state(state, state_file)
+    print(f"📊 Total issues fetched: {len(all_issues)}")
+    
+    merged_issues = merge_issues([], all_issues)
+    print(f"📋 Final unique issue count: {len(merged_issues)}")
 
     return merged_issues
 
@@ -199,53 +129,3 @@ def save_raw_issues(issues: list[dict[str, Any]], filepath: Path) -> None:
 
     with gzip.open(filepath, "wt", encoding="utf-8") as f:
         json.dump(issues, f, indent=None, separators=(",", ":"))
-
-
-def main() -> None:
-    """Main pull entry point."""
-    parser = argparse.ArgumentParser(description="Pull GitHub issues and save raw data")
-    parser.add_argument(
-        "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to analyze"
-    )
-    parser.add_argument(
-        "--include-closed", "-c", action="store_true", help="Include closed issues"
-    )
-    parser.add_argument("--limit", "-l", type=int, help="Limit number of issues")
-    parser.add_argument(
-        "--output", help="Output file path (default: data/raw-issues-{repo}.json.gz)"
-    )
-    parser.add_argument(
-        "--start-date",
-        default="2025-01-01",
-        help="Start date for fetching issues (YYYY-MM-DD)",
-    )
-    parser.add_argument(
-        "--refetch", action="store_true", help="Refetch all issues from start date"
-    )
-
-    args = parser.parse_args()
-
-    print(f"🔍 Fetching issues from {args.repo}...")
-
-    raw_issues = fetch_issues(
-        repo=args.repo,
-        include_closed=args.include_closed,
-        limit=args.limit,
-        start_date=args.start_date,
-        refetch=args.refetch,
-    )
-    print(f"📥 Retrieved {len(raw_issues)} issues")
-
-    # Determine output path
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        repo_name = args.repo.replace("/", "-")
-        output_path = Path("data") / f"raw-issues-{repo_name}.json.gz"
-
-    save_raw_issues(raw_issues, output_path)
-    print(f"✅ Raw issue database saved to {output_path}")
-
-
-if __name__ == "__main__":
-    main()

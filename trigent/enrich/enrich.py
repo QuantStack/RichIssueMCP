@@ -179,14 +179,6 @@ def add_quartile_columns(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return df.to_dict("records")
 
 
-def add_umap_projection(
-    issues: list[dict[str, Any]], n_components: int = 2
-) -> list[dict[str, Any]]:
-    """UMAP projection removed - returns issues unchanged."""
-    print("⚠️  UMAP projection disabled (dependency removed)")
-    return issues
-
-
 def print_stats(enriched: list[dict[str, Any]]) -> None:
     """Print statistics about enriched issues."""
     total = len(enriched)
@@ -195,61 +187,3 @@ def print_stats(enriched: list[dict[str, Any]]) -> None:
     print("📊 Statistics:")
     print(f"  Total issues: {total}")
     print(f"  With embeddings: {with_embeddings}")
-
-
-def main():
-    """Main enrichment entry point."""
-    parser = argparse.ArgumentParser(
-        description="Enrich raw GitHub issues with metrics and embeddings"
-    )
-    parser.add_argument("input_file", help="Path to raw issues JSON.gz file")
-    parser.add_argument(
-        "--model", default="mistral-embed", help="Mistral embedding model"
-    )
-    parser.add_argument(
-        "--output", help="Output file path (default: data/enriched-{input_basename})"
-    )
-    parser.add_argument("--skip-umap", action="store_true", help="Skip UMAP projection")
-
-    args = parser.parse_args()
-
-    input_path = Path(args.input_file)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
-
-    # Determine output path
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        basename = input_path.name.replace("raw-", "enriched-")
-        output_path = Path("data") / basename
-
-    output_path.parent.mkdir(exist_ok=True)
-
-    print(f"🔍 Loading raw issues from {input_path}...")
-    raw_issues = load_raw_issues(input_path)
-    print(f"📥 Retrieved {len(raw_issues)} issues")
-
-    # Get API key from config
-    config = get_config()
-    api_key = config.get("api", {}).get("mistral_api_key")
-    if not api_key:
-        raise ValueError("Mistral API key required in config.toml [api] section")
-
-    # Enrich issues
-    enriched = [enrich_issue(issue, api_key, args.model) for issue in raw_issues]
-
-    print("🔧 Computing quartile assignments...")
-    enriched = add_quartile_columns(enriched)
-
-    # Add UMAP projection if requested
-    if not args.skip_umap:
-        enriched = add_umap_projection(enriched)
-
-    save_enriched_issues(enriched, output_path)
-    print(f"✅ Enriched issue database saved to {output_path}")
-    print_stats(enriched)
-
-
-if __name__ == "__main__":
-    main()

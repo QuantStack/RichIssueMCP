@@ -2,8 +2,11 @@
 """Main CLI entry point for Trigent."""
 
 import argparse
+import glob
+import os
 from pathlib import Path
 
+from trigent.config import get_config
 from trigent.enrich.enrich import (
     add_quartile_columns,
     add_umap_projection,
@@ -14,7 +17,6 @@ from trigent.enrich.enrich import (
 )
 from trigent.mcp.mcp_server import run_mcp_server
 from trigent.pull.pull import fetch_issues, save_raw_issues
-from trigent.config import get_config
 
 
 def cmd_pull(args):
@@ -26,7 +28,6 @@ def cmd_pull(args):
         include_closed=args.include_closed,
         limit=args.limit,
         start_date=getattr(args, "start_date", "2025-01-01"),
-        refetch=getattr(args, "refetch", False),
     )
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
@@ -92,6 +93,57 @@ def cmd_agent(args):
     print("This would launch Claude Code with MCP server access")
 
 
+def cmd_clean(args):
+    """Execute clean command to remove downloaded data."""
+    data_dir = Path("data")
+    
+    if not data_dir.exists():
+        print("📁 No data directory found")
+        return
+    
+    # Find data files
+    patterns = ["raw-issues-*.json.gz", "enriched-issues-*.json.gz", "state-*.json"]
+    files_to_delete = []
+    
+    for pattern in patterns:
+        files_to_delete.extend(data_dir.glob(pattern))
+    
+    if not files_to_delete:
+        print("📁 No data files found to clean")
+        return
+    
+    # Show files that would be deleted
+    print("🗑️  Files to be deleted:")
+    for file_path in sorted(files_to_delete):
+        file_size = file_path.stat().st_size
+        if file_size > 1024 * 1024:
+            size_str = f"{file_size / (1024 * 1024):.1f} MB"
+        elif file_size > 1024:
+            size_str = f"{file_size / 1024:.1f} KB"
+        else:
+            size_str = f"{file_size} bytes"
+        print(f"  - {file_path} ({size_str})")
+    
+    # Ask for confirmation unless --yes flag is used
+    if not args.yes:
+        response = input("\n❓ Delete these files? (y/N): ").strip().lower()
+        if response not in ('y', 'yes'):
+            print("❌ Clean operation cancelled")
+            return
+    
+    # Delete the files
+    deleted_count = 0
+    for file_path in files_to_delete:
+        try:
+            file_path.unlink()
+            deleted_count += 1
+            print(f"🗑️  Deleted {file_path}")
+        except OSError as e:
+            print(f"❌ Failed to delete {file_path}: {e}")
+    
+    print(f"✅ Cleaned {deleted_count} files from {data_dir}")
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -147,6 +199,13 @@ def main():
         "--limit", type=int, help="Limit number of issues to process"
     )
     agent_parser.set_defaults(func=cmd_agent)
+
+    # Clean command
+    clean_parser = subparsers.add_parser("clean", help="Clean downloaded data files")
+    clean_parser.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
+    clean_parser.set_defaults(func=cmd_clean)
 
     args = parser.parse_args()
 
