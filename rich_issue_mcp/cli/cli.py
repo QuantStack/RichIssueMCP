@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""Main CLI entry point for Rich Issue MCP."""
+
+import argparse
+from pathlib import Path
+
+from rich_issue_mcp.config import get_config, get_data_directory, get_data_file_path
+from rich_issue_mcp.enrich.enrich import (
+    add_k4_distances,
+    add_quartile_columns,
+    add_summaries,
+    enrich_issue,
+    load_raw_issues,
+    print_stats,
+    save_enriched_issues,
+)
+from rich_issue_mcp.mcp.mcp_server import run_mcp_server
+from rich_issue_mcp.pull.pull import fetch_issues, save_raw_issues
+
+
+def cmd_pull(args) -> None:
+    """Execute pull command."""
+    print(f"🔍 Fetching issues from {args.repo}...")
+
+    raw_issues = fetch_issues(
+        repo=args.repo,
+        include_closed=args.include_closed,
+        limit=args.limit,
+        start_date=getattr(args, "start_date", "2025-01-01"),
+    )
+    print(f"📥 Retrieved {len(raw_issues)} issues")
+
+    # Determine output path
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        repo_name = args.repo.replace("/", "-")
+        output_path = get_data_file_path(f"raw-issues-{repo_name}.json.gz")
+
+    save_raw_issues(raw_issues, output_path)
+    print(f"✅ Raw issue database saved to {output_path}")
+
+
+def cmd_enrich(args) -> None:
+    """Execute enrich command."""
+    input_path = Path(args.input_file)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_path}")
+
+    # Determine output path
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        basename = input_path.name.replace("raw-", "enriched-")
+        output_path = get_data_file_path(basename)
+
+    output_path.parent.mkdir(exist_ok=True)
+
+    print(f"🔍 Loading raw issues from {input_path}...")
+    raw_issues = load_raw_issues(input_path)
+    print(f"📥 Retrieved {len(raw_issues)} issues")
+
+    # Get API key from config
+    config = get_config()
+    api_key = config.get("api", {}).get("mistral_api_key")
+    if not api_key:
+        raise ValueError("Mistral API key required in config.toml [api] section")
+
+    # Enrich issues
+    enriched = [enrich_issue(issue, api_key, args.model) for issue in raw_issues]
+
+    print("🔧 Computing quartile assignments...")
+    enriched = add_quartile_columns(enriched)
+
+    if not args.skip_summaries:
+        print("📝 Generating AI summaries...")
+        enriched = add_summaries(enriched, api_key)
+    else:
+        print("⏭️  Skipping AI summaries...")
+        for issue in enriched:
+            issue["summary"] = None
+
+    print("🔧 Computing k-4 nearest neighbor distances...")
+    enriched = add_k4_distances(enriched)
+
+    save_enriched_issues(enriched, output_path)
+    print(f"✅ Enriched issue database saved to {output_path}")
+    print_stats(enriched)
+
+
+def cmd_mcp(args) -> None:
+    """Execute MCP server."""
+    run_mcp_server(host=args.host, port=args.port, db_file=args.db_file)
+
+
+def cmd_clean(args) -> None:
+    """Execute clean command to remove downloaded data."""
+    data_dir = get_data_directory()
+
+    if not data_dir.exists():
+        print("📁 No data directory found")
+        return
+
+    # Find data files
+    patterns = ["raw-issues-*.json.gz", "enriched-issues-*.json.gz", "state-*.json"]
+    files_to_delete = []
+
+    for pattern in patterns:
+        files_to_delete.extend(data_dir.glob(pattern))
+
+    if not files_to_delete:
+        print("📁 No data files found to clean")
+        return
+
+    # Show files that would be deleted
+    print("🗑️  Files to be deleted:")
+    for file_path in sorted(files_to_delete):
+        file_size = file_path.stat().st_size
+        if file_size > 1024 * 1024:
+            size_str = f"{file_size / (1024 * 1024):.1f} MB"
+        elif file_size > 1024:
+            size_str = f"{file_size / 1024:.1f} KB"
+        else:
+            size_str = f"{file_size} bytes"
+        print(f"  - {file_path} ({size_str})")
+
+    # Ask for confirmation unless --yes flag is used
+    if not args.yes:
+        response = input("\n❓ Delete these files? (y/N): ").strip().lower()
+        if response not in ("y", "yes"):
+            print("❌ Clean operation cancelled")
+            return
+
+    # Delete the files
+    deleted_count = 0
+    for file_path in files_to_delete:
+        try:
+            file_path.unlink()
+            deleted_count += 1
+            print(f"🗑️  Deleted {file_path}")
+        except OSError as e:
+            print(f"❌ Failed to delete {file_path}: {e}")
+
+    print(f"✅ Cleaned {deleted_count} files from {data_dir}")
+
+
+def main() -> None:
+    """Main CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="Rich Issue MCP - Enhanced repo information for AI triaging"
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Pull command
+    pull_parser = subparsers.add_parser("pull", help="Pull raw issues from GitHub")
+    pull_parser.add_argument(
+        "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to analyze"
+    )
+    pull_parser.add_argument(
+        "--include-closed", "-c", action="store_true", help="Include closed issues"
+    )
+    pull_parser.add_argument("--limit", "-l", type=int, help="Limit number of issues")
+    pull_parser.add_argument("--output", help="Output file path")
+    pull_parser.add_argument(
+        "--start-date",
+        default="2025-01-01",
+        help="Start date for fetching issues (YYYY-MM-DD)",
+    )
+    pull_parser.add_argument(
+        "--refetch", action="store_true", help="Refetch all issues from start date"
+    )
+    pull_parser.set_defaults(func=cmd_pull)
+
+    # Enrich command
+    enrich_parser = subparsers.add_parser(
+        "enrich", help="Enrich raw issues with embeddings and metrics"
+    )
+    enrich_parser.add_argument("input_file", help="Path to raw issues JSON.gz file")
+    enrich_parser.add_argument("--model", default="mistral-embed", help="Mistral model")
+    enrich_parser.add_argument("--output", help="Output file path")
+    enrich_parser.add_argument(
+        "--skip-summaries", action="store_true", help="Skip LLM summarization to save time"
+    )
+    enrich_parser.set_defaults(func=cmd_enrich)
+
+    # MCP command
+    mcp_parser = subparsers.add_parser("mcp", help="Start MCP server")
+    mcp_parser.add_argument("--host", default="localhost", help="Host to bind to")
+    mcp_parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
+    mcp_parser.add_argument("--db-file", help="Database file path")
+    mcp_parser.set_defaults(func=cmd_mcp)
+
+    # Clean command
+    clean_parser = subparsers.add_parser("clean", help="Clean downloaded data files")
+    clean_parser.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
+    clean_parser.set_defaults(func=cmd_clean)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return
+
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

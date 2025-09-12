@@ -1,0 +1,30 @@
+# Rich Issue MCP Configuration File
+# Copy this file to config.toml and fill in your values
+
+[api]
+# Mistral API key for embeddings and AI processing
+mistral_api_key = "your-mistral-api-key-here"
+
+[github]
+# GitHub configuration (optional - defaults to gh CLI)
+# token = "your-github-token-here"
+
+[mcp]
+# MCP server configuration
+host = "localhost"
+port = 8000
+
+[processing]
+# Processing configuration
+batch_size = 100
+max_issues = 1000
+
+[cache]
+# Cache configuration
+# directory = "./dcache"     # Cache directory (defaults to project_root/dcache)
+# size_limit_mb = 500        # Cache size limit in MB (default: 500MB)
+
+[data]
+# Data directory configuration (REQUIRED)
+# Must be an absolute path
+directory = "/path/to/your/data"  # Absolute path to data directory
