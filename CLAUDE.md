@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Trigent is a GitHub issue triaging agent designed to help manage thousands of issues in upstream projects like JupyterLab. The project focuses on organizing, labeling, linking, and summarizing issues using AI-powered analysis.
+Trigent is a GitHub issue triaging agent designed to help manage thousands of issues in upstream projects like JupyterLab. The project focuses on organizing, labeling, linking, and summarizing issues using AI-powered analysis with semantic search, metrics computation, and intelligent data management.
 
 ## Architecture
 
@@ -51,24 +51,30 @@ trigent pull jupyterlab/jupyterlab
 trigent pull jupyterlab/jupyterlab --refetch
 
 # 2. Enrich data with embeddings and metrics
-trigent enrich data/raw-issues-jupyterlab-jupyterlab.json.gz --api-key $MISTRAL_API_KEY
+trigent enrich data/raw-issues-jupyterlab-jupyterlab.json.gz
 
 # 3. Start MCP server for database access
 trigent mcp &
 
-# 4. Process issues with Claude Code agent  
-trigent agent --priority-order --limit 5
+# 4. Clean data files when needed
+trigent clean
 ```
 
 ## Development Commands
 
 ### Setup
 ```bash
+# Install with development dependencies
 pip install -e ".[dev]"
+
+# Configure Mistral API key in config.toml
+cp config.toml.example config.toml
+# Edit config.toml and add your Mistral API key
 ```
 
 ### Code Quality
 ```bash
+# Lint, format, and type check
 ruff check trigent/ && ruff format trigent/ && mypy trigent/
 ```
 
@@ -82,12 +88,15 @@ ruff check trigent/ && ruff format trigent/ && mypy trigent/
 
 ## Dependencies
 
-- **Python 3.11+**: Core language with modern type hints
-- **pandas, numpy**: Data processing and quartile calculations
+- **Python 3.12+**: Core language with modern type hints (updated requirement)
+- **pandas, numpy**: Data processing and quartile calculations  
 - **requests**: HTTP client for Mistral API
 - **FastMCP**: Minimal server for database access
-- **subprocess**: Only for calling `gh` CLI in pull module
-- **Claude Code**: AI agent for triaging
+- **scikit-learn**: Machine learning utilities for k-nearest neighbors
+- **diskcache**: Persistent caching for API responses
+- **toml**: Configuration file parsing
+- **ipython, ipdb**: Interactive development and debugging
+- **gh CLI**: GitHub issue fetching (external dependency)
 
 ## Architecture Notes
 
@@ -96,6 +105,6 @@ ruff check trigent/ && ruff format trigent/ && mypy trigent/
 - **State Management**: Pull module tracks last fetch timestamps to enable efficient incremental updates
 - **Issue Merging**: Smart merge logic updates existing issues while preserving all data integrity  
 - **Enriched Data**: Pandas-based processing adds embeddings and quartiles (UMAP removed)
-- **MCP Server**: FastMCP provides 5 tools for Claude Code agent access (including get_top_issues)
+- **MCP Server**: FastMCP provides database access tools for AI agents
 - **CLI Integration**: Single `trigent` command orchestrates entire pipeline with direct Python imports
 - **Direct Integration**: No subprocess calls between internal modules - all use direct Python imports

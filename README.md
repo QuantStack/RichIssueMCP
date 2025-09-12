@@ -8,6 +8,9 @@ Efficiently triage thousands of GitHub issues using semantic analysis and AI dec
 # Install the package
 pip install -e .
 
+# Configure API key (copy and edit config file)
+cp config.toml.example config.toml
+
 # 1. Pull raw issue data (intelligent paging from 2025-01-01)
 trigent pull jupyterlab/jupyterlab --start-date 2025-01-01
 
@@ -18,13 +21,13 @@ trigent pull jupyterlab/jupyterlab
 trigent pull jupyterlab/jupyterlab --refetch
 
 # 2. Enrich data with embeddings and metrics
-trigent enrich data/raw-issues-jupyterlab-jupyterlab.json.gz --api-key $MISTRAL_API_KEY
+trigent enrich data/raw-issues-jupyterlab-jupyterlab.json.gz
 
 # 3. Start MCP server for database access
 trigent mcp &
 
-# 4. Process issues with Claude Code agent  
-trigent agent --priority-order --limit 5
+# 4. Clean data files when needed
+trigent clean
 ```
 
 ## Architecture
@@ -64,6 +67,9 @@ trigent agent --priority-order --limit 5
 - **Engagement Heuristics**: Comment frequency, age, activity scores
 - **Link Detection**: Extract referenced issue numbers (#1234)
 - **Quartile Analysis**: Statistical distribution of all metrics
+- **K-NN Analysis**: K-4 nearest neighbor distance computation for clustering
+- **AI Summaries**: Optional LLM-generated issue summaries
+- **Persistent Cache**: Disk-based caching for API responses
 - **Top Issues API**: Query top N issues sorted by any metric
 
 ## Files
@@ -72,15 +78,20 @@ trigent agent --priority-order --limit 5
 - `trigent/pull/pull.py` - Python module for fetching raw issues from GitHub
 - `trigent/enrich/enrich.py` - Python enrichment pipeline with embeddings/metrics
 - `trigent/mcp/mcp_server.py` - FastMCP server for database access
+- `trigent/config.py` - Configuration management
+- `config.toml` - Configuration file for API keys and settings
 - `pyproject.toml` - Project configuration
 
 ## Dependencies
 
-- **Python 3.11+** - Core language with modern type hints
+- **Python 3.12+** - Core language with modern type hints
 - **pandas, numpy** - Data processing and quartile calculations
 - **requests** - HTTP client for Mistral API
 - **FastMCP** - Minimal server for database access
-- **gh CLI** - GitHub issue fetching
-- **Claude Code** - AI agent for triaging
+- **scikit-learn** - Machine learning utilities for k-nearest neighbors
+- **diskcache** - Persistent caching for API responses
+- **toml** - Configuration file parsing
+- **ipython, ipdb** - Interactive development and debugging
+- **gh CLI** - GitHub issue fetching (external dependency)
 
 Designed for large-scale issue management with minimal dependencies and maximum efficiency.
