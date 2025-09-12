@@ -8,9 +8,19 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from trigent.config import get_data_file_path
+
 mcp = FastMCP("Rich Issues Server")
 _issues_cache: dict[str, list[dict[str, Any]]] = {}
-_default_db_file = "data/enriched-issues-jupyterlab-jupyterlab.json.gz"
+
+
+def _get_default_db_file() -> str:
+    """Get default database file path from config."""
+    try:
+        return str(get_data_file_path("enriched-issues-jupyterlab-jupyterlab.json.gz"))
+    except (FileNotFoundError, ValueError):
+        # Fallback if config not available
+        return "data/enriched-issues-jupyterlab-jupyterlab.json.gz"
 
 
 def load_issues_db(db_file: str) -> list[dict[str, Any]]:
@@ -33,11 +43,18 @@ def load_issues_db(db_file: str) -> list[dict[str, Any]]:
 
 @mcp.tool()
 def get_issue(issue_number: int, db_file: str | None = None) -> dict[str, Any] | None:
-    """Get specific issue with all metadata and enrichment data."""
+    """Get specific issue summary and number."""
     if db_file is None:
-        db_file = _default_db_file
+        db_file = _get_default_db_file()
     issues = load_issues_db(db_file)
-    return next((i for i in issues if i["number"] == issue_number), None)
+    issue = next((i for i in issues if i["number"] == issue_number), None)
+    if not issue:
+        return None
+    return {
+        "number": issue["number"],
+        "summary": issue.get("summary"),
+        "conversation": issue.get("conversation")
+    }
 
 
 @mcp.tool()
@@ -49,7 +66,7 @@ def find_similar_issues(
 ) -> list[dict[str, Any]]:
     """Find issues similar to target issue using embeddings."""
     if db_file is None:
-        db_file = _default_db_file
+        db_file = _get_default_db_file()
     issues = load_issues_db(db_file)
     target = next((i for i in issues if i["number"] == issue_number), None)
 
@@ -73,8 +90,12 @@ def find_similar_issues(
 
         similarity = cosine_similarity(target["embedding"], issue["embedding"])
         if similarity >= threshold:
-            result = issue.copy()
-            result["similarity"] = similarity
+            result = {
+                "number": issue["number"],
+                "summary": issue.get("summary"),
+                "conversation": issue.get("conversation"),
+                "similarity": similarity,
+            }
             similar.append(result)
 
     return sorted(similar, key=lambda x: x["similarity"], reverse=True)[:limit]
@@ -86,7 +107,7 @@ def find_linked_issues(
 ) -> list[dict[str, Any]]:
     """Find issues referenced in the body/comments of target issue."""
     if db_file is None:
-        db_file = _default_db_file
+        db_file = _get_default_db_file()
     issues = load_issues_db(db_file)
     target = next((i for i in issues if i["number"] == issue_number), None)
 
@@ -101,7 +122,15 @@ def find_linked_issues(
     linked_numbers = {int(m.group(1)) for m in re.finditer(r"#(\d+)", text)}
     linked_numbers.discard(issue_number)  # Remove self-reference
 
-    return [i for i in issues if i["number"] in linked_numbers]
+    return [
+        {
+            "number": i["number"],
+            "summary": i.get("summary"),
+            "conversation": i.get("conversation")
+        }
+        for i in issues
+        if i["number"] in linked_numbers
+    ]
 
 
 @mcp.tool()
@@ -110,7 +139,7 @@ def get_issue_metrics(
 ) -> dict[str, Any] | None:
     """Get enrichment metrics for a specific issue."""
     if db_file is None:
-        db_file = _default_db_file
+        db_file = _get_default_db_file()
     issues = load_issues_db(db_file)
     issue = next((i for i in issues if i["number"] == issue_number), None)
 
@@ -131,6 +160,51 @@ def get_issue_metrics(
 
 
 @mcp.tool()
+def get_available_sort_columns(db_file: str | None = None) -> list[str]:
+    """Get list of available columns that can be used for sorting issues."""
+    if db_file is None:
+        db_file = _get_default_db_file()
+    issues = load_issues_db(db_file)
+
+    if not issues:
+        return []
+
+    # Get all available columns from the first issue
+    all_columns = list(issues[0].keys())
+
+    # Filter to columns that are likely useful for sorting (numeric, string, not complex objects)
+    sortable_columns = []
+    sample_issue = issues[0]
+
+    for column in all_columns:
+        value = sample_issue.get(column)
+        # Include columns with numeric, string, or None values
+        # Exclude lists, dicts, and other complex types unless they're specific known ones
+        if value is None or isinstance(value, int | float | str | bool):
+            sortable_columns.append(column)
+        elif column in ["k4_distances"]:  # Skip complex columns we know aren't sortable
+            continue
+        else:
+            # For other types, check if they're consistently comparable across a few samples
+            sample_values = [
+                issue.get(column)
+                for issue in issues[:5]
+                if issue.get(column) is not None
+            ]
+            if sample_values and all(
+                isinstance(v, type(sample_values[0])) for v in sample_values
+            ):
+                try:
+                    # Test if values are sortable
+                    sorted(sample_values)
+                    sortable_columns.append(column)
+                except (TypeError, ValueError):
+                    continue
+
+    return sorted(sortable_columns)
+
+
+@mcp.tool()
 def get_top_issues(
     sort_column: str,
     limit: int = 10,
@@ -139,7 +213,7 @@ def get_top_issues(
 ) -> list[dict[str, Any]]:
     """Get top n issues sorted by a specific column from the enriched database."""
     if db_file is None:
-        db_file = _default_db_file
+        db_file = _get_default_db_file()
     issues = load_issues_db(db_file)
 
     if not issues:
@@ -166,7 +240,14 @@ def get_top_issues(
             valid_issues, key=lambda x: str(x[sort_column]), reverse=descending
         )
 
-    return sorted_issues[:limit]
+    return [
+        {
+            "number": issue["number"],
+            "summary": issue.get("summary"),
+            "conversation": issue.get("conversation")
+        }
+        for issue in sorted_issues[:limit]
+    ]
 
 
 def run_mcp_server(
@@ -176,14 +257,10 @@ def run_mcp_server(
 
     # Set default db_file if not provided
     if db_file is None:
-        db_file = "data/enriched-issues-jupyterlab-jupyterlab.json.gz"
+        db_file = _get_default_db_file()
 
     print("🚀 Starting MCP server")
     print(f"📂 Using database: {db_file}")
-
-    # Update default db_file in all tool functions
-    global _default_db_file
-    _default_db_file = db_file
 
     # Run with stdio transport (default for MCP)
     mcp.run()

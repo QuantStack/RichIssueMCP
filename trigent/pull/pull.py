@@ -18,7 +18,7 @@ def fetch_issues_chunk(
     """Fetch a chunk of issues from GitHub using gh CLI with updatedAt date filtering."""
     state = "all" if include_closed else "open"
     updated_since, updated_until = updated_range
-    
+
     # Use GitHub's date range syntax with updatedAt field
     search_query = f"updated:{updated_since}..{updated_until}"
 
@@ -35,7 +35,7 @@ def fetch_issues_chunk(
         "--search",
         search_query,
     ]
-    
+
     if limit is not None:
         cmd.extend(["--limit", str(limit)])
 
@@ -67,10 +67,7 @@ def generate_date_ranges(
 
     while current < end:
         next_chunk = min(current + timedelta(days=days), end)
-        ranges.append((
-            current.strftime("%Y-%m-%d"), 
-            next_chunk.strftime("%Y-%m-%d")
-        ))
+        ranges.append((current.strftime("%Y-%m-%d"), next_chunk.strftime("%Y-%m-%d")))
         current = next_chunk
 
     return ranges
@@ -81,7 +78,7 @@ def merge_issues(
 ) -> list[dict[str, Any]]:
     """Merge new issues with existing ones, updating duplicates based on issue number."""
     issue_map = {issue["number"]: issue for issue in existing_issues}
-    
+
     for issue in new_issues:
         issue_map[issue["number"]] = issue
 
@@ -96,7 +93,7 @@ def fetch_issues(
     chunk_days: int = 7,
 ) -> list[dict[str, Any]]:
     """Fetch issues from GitHub using updatedAt chunking with specified day ranges."""
-    
+
     date_ranges = generate_date_ranges(start_date, days=chunk_days)
     print(f"📊 Fetching issues in {len(date_ranges)} chunks of {chunk_days} days each")
 
@@ -116,7 +113,7 @@ def fetch_issues(
         all_issues.extend(chunk_issues)
 
     print(f"📊 Total issues fetched: {len(all_issues)}")
-    
+
     merged_issues = merge_issues([], all_issues)
     print(f"📋 Final unique issue count: {len(merged_issues)}")
 

@@ -18,3 +18,13 @@ port = 8000
 # Processing configuration
 batch_size = 100
 max_issues = 1000
+
+[cache]
+# Cache configuration
+# directory = "./dcache"     # Cache directory (defaults to project_root/dcache)
+# size_limit_mb = 500        # Cache size limit in MB (default: 500MB)
+
+[data]
+# Data directory configuration (REQUIRED)
+# Must be an absolute path
+directory = "/path/to/your/data"  # Absolute path to data directory
