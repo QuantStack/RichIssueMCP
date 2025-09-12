@@ -479,6 +479,96 @@ def get_first_issue_without_recommendation(db_file: str | None = None) -> dict[s
     return None
 
 
+@mcp.tool()
+def get_issue_by_difficulty(
+    difficulty: str,
+    db_file: str | None = None,
+) -> dict[str, Any] | None:
+    """Get an issue by difficulty level based on solution complexity and risk.
+    
+    Easy: low solution_complexity AND low solution_risk
+    Medium: medium solution_complexity OR medium solution_risk (but not both high)
+    Hard: high solution_complexity OR high solution_risk
+    
+    Returns the issue with highest engagement (total emojis) for the given difficulty.
+    """
+    valid_difficulties = {"easy", "medium", "hard"}
+    if difficulty not in valid_difficulties:
+        return {
+            "status": "error",
+            "message": f"difficulty must be one of: {', '.join(sorted(valid_difficulties))}"
+        }
+    
+    db_file = _get_preferred_db_file(db_file)
+    issues = load_issues_db(db_file)
+
+    if not issues:
+        return None
+
+    # Filter issues that have recommendations
+    issues_with_recommendations = [
+        issue for issue in issues
+        if issue.get("recommendations") and len(issue.get("recommendations", [])) > 0
+    ]
+
+    if not issues_with_recommendations:
+        return None
+
+    # Categorize issues by difficulty based on their recommendations
+    categorized_issues = []
+    
+    for issue in issues_with_recommendations:
+        recommendations = issue.get("recommendations", [])
+        
+        # Get the latest recommendation's complexity and risk
+        latest_rec = recommendations[-1]  # Most recent recommendation
+        complexity = latest_rec.get("solution_complexity", "").lower()
+        risk = latest_rec.get("solution_risk", "").lower()
+        
+        # Categorize based on complexity and risk
+        issue_difficulty = None
+        
+        if complexity == "low" and risk == "low":
+            issue_difficulty = "easy"
+        elif complexity == "high" or risk == "high":
+            issue_difficulty = "hard"
+        else:  # medium complexity/risk or mixed low/medium
+            issue_difficulty = "medium"
+        
+        if issue_difficulty == difficulty:
+            # Calculate engagement score (total emojis)
+            engagement_score = issue.get("issue_total_emojis", 0) + issue.get("conversation_total_emojis", 0)
+            
+            categorized_issues.append({
+                "issue": issue,
+                "engagement_score": engagement_score,
+                "latest_recommendation": latest_rec
+            })
+
+    if not categorized_issues:
+        return None
+
+    # Return the issue with highest engagement score
+    best_issue_data = max(categorized_issues, key=lambda x: x["engagement_score"])
+    issue = best_issue_data["issue"]
+    
+    return {
+        "number": issue["number"],
+        "title": issue.get("title"),
+        "summary": issue.get("summary"),
+        "url": issue.get("url"),
+        "state": issue.get("state"),
+        "difficulty": difficulty,
+        "engagement_score": best_issue_data["engagement_score"],
+        "issue_emojis": issue.get("issue_total_emojis", 0),
+        "conversation_emojis": issue.get("conversation_total_emojis", 0),
+        "solution_complexity": best_issue_data["latest_recommendation"].get("solution_complexity"),
+        "solution_risk": best_issue_data["latest_recommendation"].get("solution_risk"),
+        "recommendation": best_issue_data["latest_recommendation"].get("recommendation"),
+        "recommendations_count": len(issue.get("recommendations", []))
+    }
+
+
 def run_mcp_server(
     host: str = "localhost", port: int = 8000, db_file: str | None = None
 ) -> None:
