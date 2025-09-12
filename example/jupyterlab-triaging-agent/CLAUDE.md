@@ -95,3 +95,82 @@ The repository also contains Python components in:
 - Various test and configuration files
 
 Python development uses standard pip/conda installation and pytest for testing.
+
+## Issue Triage Workflow
+
+When analyzing GitHub issues for prioritization, follow this systematic approach:
+
+### 1. Issue Selection and Data Gathering
+```bash
+# Find next untriaged issue
+python3 -c "
+import json
+with open('open-issues.scratch.json', 'r') as f:
+    issues = json.load(f)
+for issue in issues:
+    if 'recommendation' not in issue:
+        print(f'Issue: {issue[\"name\"]}')
+        break"
+```
+
+Gather comprehensive issue data:
+- `mcp__rich_issue_mcp__get_issue` - Full conversation and summary
+- `mcp__rich_issue_mcp__get_issue_metrics` - Engagement metrics and quartile rankings
+- `mcp__rich_issue_mcp__find_similar_issues` - Related issues for context
+- `mcp__rich_issue_mcp__find_linked_issues` - Direct issue references
+
+### 2. Assessment Framework
+
+**Severity** (how strongly are Jupyter workflows affected?):
+- **High**: Breaks core functionality, blocks common workflows
+- **Medium**: Impacts user experience but workarounds exist
+- **Low**: Minor inconvenience or edge case
+
+**Frequency** (how often during normal use is this encountered?):
+- **High**: Daily occurrence for typical users
+- **Medium**: Weekly/monthly occurrence
+- **Low**: Rare or specific use cases only
+
+**Fraction** (what portion of user base is affected?):
+- **High**: Most JupyterLab users encounter this
+- **Medium**: Significant subset (intermediate/advanced users)
+- **Low**: Small subset or specific user groups
+
+### 3. Technical Assessment
+
+Evaluate using JupyterLab architecture knowledge:
+- Is the issue still relevant? (May have been fixed in recent versions)
+- Which packages would require modification?
+- Implementation complexity and potential side effects
+- Alignment with existing patterns and architectural decisions
+
+### 4. Final Recommendation
+
+- **prioritize**: High-impact, well-defined issues with clear user benefit
+- **neutral**: Legitimate improvements that can be addressed when resources permit
+- **deprioritize**: Low-impact or already partially addressed through alternatives
+- **close**: No longer relevant, duplicate, or out of scope
+
+### 5. Update Issue Database
+```python
+# Update JSON with assessment
+python3 -c "
+import json
+with open('open-issues.scratch.json', 'r') as f:
+    issues = json.load(f)
+for i, issue in enumerate(issues):
+    if issue['name'] == '#{issue_number}':
+        issues[i].update({
+            'severity': '{low|medium|high}',
+            'frequency': '{low|medium|high}', 
+            'fraction': '{low|medium|high}',
+            'recommendation': '{close|prioritize|neutral|deprioritize}',
+            'report': '{comprehensive analysis text}'
+        })
+        break
+with open('open-issues.scratch.json', 'w') as f:
+    json.dump(issues, f, indent=2)
+"
+```
+
+This workflow ensures consistent, thorough evaluation of each issue while leveraging both quantitative metrics and qualitative JupyterLab expertise.
