@@ -101,23 +101,22 @@ Python development uses standard pip/conda installation and pytest for testing.
 When analyzing GitHub issues for prioritization, follow this systematic approach:
 
 ### 1. Issue Selection and Data Gathering
-```bash
-# Find next untriaged issue
-python3 -c "
-import json
-with open('open-issues.scratch.json', 'r') as f:
-    issues = json.load(f)
-for issue in issues:
-    if 'recommendation' not in issue:
-        print(f'Issue: {issue[\"name\"]}')
-        break"
-```
 
-Gather comprehensive issue data:
+Use Rich Issue MCP tools for efficient issue management:
+
+**Get Next Issue:**
+- `mcp__rich_issue_mcp__get_first_issue_without_recommendation` - Find next untriaged issue
+
+**Gather Comprehensive Data:**
 - `mcp__rich_issue_mcp__get_issue` - Full conversation and summary
 - `mcp__rich_issue_mcp__get_issue_metrics` - Engagement metrics and quartile rankings
 - `mcp__rich_issue_mcp__find_similar_issues` - Related issues for context
 - `mcp__rich_issue_mcp__find_linked_issues` - Direct issue references
+
+**Additional Tools:**
+- `mcp__rich_issue_mcp__get_available_sort_columns` - List sortable columns
+- `mcp__rich_issue_mcp__get_top_issues` - Get top N issues by metric
+- `mcp__rich_issue_mcp__export_all_open_issues` - Export issue data to JSON
 
 ### 2. Assessment Framework
 
@@ -152,25 +151,21 @@ Evaluate using JupyterLab architecture knowledge:
 - **close**: No longer relevant, duplicate, or out of scope
 
 ### 5. Update Issue Database
-```python
-# Update JSON with assessment
-python3 -c "
-import json
-with open('open-issues.scratch.json', 'r') as f:
-    issues = json.load(f)
-for i, issue in enumerate(issues):
-    if issue['name'] == '#{issue_number}':
-        issues[i].update({
-            'severity': '{low|medium|high}',
-            'frequency': '{low|medium|high}', 
-            'fraction': '{low|medium|high}',
-            'recommendation': '{close|prioritize|neutral|deprioritize}',
-            'report': '{comprehensive analysis text}'
-        })
-        break
-with open('open-issues.scratch.json', 'w') as f:
-    json.dump(issues, f, indent=2)
-"
+
+Use Rich Issue MCP to add assessment recommendations:
+
 ```
+mcp__rich_issue_mcp__add_recommendation
+```
+
+Required parameters:
+- `issue_number` - GitHub issue number
+- `severity` - Assessment: "low", "medium", "high"
+- `frequency` - Assessment: "low", "medium", "high"  
+- `prevalence` - Assessment: "low", "medium", "high"
+- `recommendation` - Final decision: "close", "deprioritize", "keep", "prioritize"
+- `report` - Comprehensive analysis text explaining the assessment
+- `solution_complexity` - Implementation effort: "low", "medium", "high"
+- `solution_risk` - Implementation risk: "low", "medium", "high"
 
 This workflow ensures consistent, thorough evaluation of each issue while leveraging both quantitative metrics and qualitative JupyterLab expertise.
