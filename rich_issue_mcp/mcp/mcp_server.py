@@ -3,6 +3,7 @@
 import gzip
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,60 @@ def _get_default_db_file() -> str:
     except (FileNotFoundError, ValueError):
         # Fallback if config not available
         return "data/enriched-issues-jupyterlab-jupyterlab.json.gz"
+
+
+def _get_agent_db_file() -> str:
+    """Get agent database file path."""
+    try:
+        base_path = get_data_file_path("agent-issues-jupyterlab-jupyterlab.json.gz")
+        return str(base_path)
+    except (FileNotFoundError, ValueError):
+        # Fallback if config not available
+        return "data/agent-issues-jupyterlab-jupyterlab.json.gz"
+
+
+def _get_preferred_db_file(db_file: str | None = None) -> str:
+    """Get preferred database file - agent DB if exists, otherwise default."""
+    if db_file is not None:
+        return db_file
+
+    agent_db = _get_agent_db_file()
+    if Path(agent_db).exists():
+        return agent_db
+
+    return _get_default_db_file()
+
+
+def _create_agent_database() -> str:
+    """Create agent database as copy of enriched database if it doesn't exist."""
+    agent_db_path = _get_agent_db_file()
+
+    if Path(agent_db_path).exists():
+        return agent_db_path
+
+    # Copy from enriched database
+    enriched_db_path = _get_default_db_file()
+    if not Path(enriched_db_path).exists():
+        raise FileNotFoundError(f"Source database not found: {enriched_db_path}")
+
+    # Load enriched data
+    with gzip.open(enriched_db_path, "rt") as f:
+        issues = json.load(f)
+
+    # Add empty recommendations field to each issue
+    for issue in issues:
+        issue["recommendations"] = []
+
+    # Save as agent database
+    Path(agent_db_path).parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(agent_db_path, "wt") as f:
+        json.dump(issues, f)
+
+    # Clear cache for the new file
+    if agent_db_path in _issues_cache:
+        del _issues_cache[agent_db_path]
+
+    return agent_db_path
 
 
 def load_issues_db(db_file: str) -> list[dict[str, Any]]:
@@ -44,8 +99,7 @@ def load_issues_db(db_file: str) -> list[dict[str, Any]]:
 @mcp.tool()
 def get_issue(issue_number: int, db_file: str | None = None) -> dict[str, Any] | None:
     """Get specific issue summary and number."""
-    if db_file is None:
-        db_file = _get_default_db_file()
+    db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
     issue = next((i for i in issues if i["number"] == issue_number), None)
     if not issue:
@@ -53,7 +107,8 @@ def get_issue(issue_number: int, db_file: str | None = None) -> dict[str, Any] |
     return {
         "number": issue["number"],
         "summary": issue.get("summary"),
-        "conversation": issue.get("conversation")
+        "conversation": issue.get("conversation"),
+        "recommendations": issue.get("recommendations", []),
     }
 
 
@@ -65,8 +120,7 @@ def find_similar_issues(
     db_file: str | None = None,
 ) -> list[dict[str, Any]]:
     """Find issues similar to target issue using embeddings."""
-    if db_file is None:
-        db_file = _get_default_db_file()
+    db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
     target = next((i for i in issues if i["number"] == issue_number), None)
 
@@ -107,8 +161,7 @@ def find_linked_issues(
     issue_number: int, db_file: str | None = None
 ) -> list[dict[str, Any]]:
     """Find issues referenced in the body/comments of target issue."""
-    if db_file is None:
-        db_file = _get_default_db_file()
+    db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
     target = next((i for i in issues if i["number"] == issue_number), None)
 
@@ -128,7 +181,7 @@ def find_linked_issues(
             "number": i["number"],
             "title": i.get("title"),
             "summary": i.get("summary"),
-            "url": i.get("url")
+            "url": i.get("url"),
         }
         for i in issues
         if i["number"] in linked_numbers
@@ -140,8 +193,7 @@ def get_issue_metrics(
     issue_number: int, db_file: str | None = None
 ) -> dict[str, Any] | None:
     """Get enrichment metrics for a specific issue."""
-    if db_file is None:
-        db_file = _get_default_db_file()
+    db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
     issue = next((i for i in issues if i["number"] == issue_number), None)
 
@@ -164,8 +216,7 @@ def get_issue_metrics(
 @mcp.tool()
 def get_available_sort_columns(db_file: str | None = None) -> list[str]:
     """Get list of available columns that can be used for sorting issues."""
-    if db_file is None:
-        db_file = _get_default_db_file()
+    db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
 
     if not issues:
@@ -214,8 +265,7 @@ def get_top_issues(
     db_file: str | None = None,
 ) -> list[dict[str, Any]]:
     """Get top n issues sorted by a specific column from the enriched database."""
-    if db_file is None:
-        db_file = _get_default_db_file()
+    db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
 
     if not issues:
@@ -247,10 +297,186 @@ def get_top_issues(
             "number": issue["number"],
             "title": issue.get("title"),
             "summary": issue.get("summary"),
-            "url": issue.get("url")
+            "url": issue.get("url"),
         }
         for issue in sorted_issues[:limit]
     ]
+
+
+@mcp.tool()
+def export_all_open_issues(
+    output_path: str,
+    db_file: str | None = None,
+) -> dict[str, Any]:
+    """Export all open issues to a JSON file with name, title, url, and summary."""
+    db_file = _get_preferred_db_file(db_file)
+    issues = load_issues_db(db_file)
+
+    if not issues:
+        return {"status": "error", "message": "No issues found in database"}
+
+    # Filter for open issues (state == "OPEN")
+    open_issues = [issue for issue in issues if issue.get("state") == "OPEN"]
+
+    # Create the output data structure
+    export_data = []
+    for issue in open_issues:
+        export_data.append(
+            {
+                "name": f"#{issue['number']}",
+                "title": issue.get("title", ""),
+                "url": issue.get("url", ""),
+                "summary": issue.get("summary", ""),
+            }
+        )
+
+    # Write to JSON file
+    try:
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(output_file, "w") as f:
+            json.dump(export_data, f, indent=2)
+
+        return {
+            "status": "success",
+            "message": f"Exported {len(export_data)} open issues to {output_path}",
+            "count": len(export_data),
+            "file_path": str(output_file.absolute()),
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to write file: {e}"}
+
+
+@mcp.tool()
+def add_recommendation(
+    issue_number: int,
+    severity: str,
+    frequency: str,
+    prevalence: str,
+    report: str,
+    recommendation: str,
+    solution_complexity: str,
+    solution_risk: str,
+    db_file: str | None = None,
+) -> dict[str, Any]:
+    """Add a recommendation to an issue in the agent database."""
+
+    # Validate input parameters
+    valid_levels = {"low", "medium", "high"}
+    valid_recommendations = {"keep", "close", "deprioritize", "prioritize"}
+
+    errors = []
+    if severity not in valid_levels:
+        errors.append(f"severity must be one of: {', '.join(sorted(valid_levels))}")
+    if frequency not in valid_levels:
+        errors.append(f"frequency must be one of: {', '.join(sorted(valid_levels))}")
+    if prevalence not in valid_levels:
+        errors.append(f"prevalence must be one of: {', '.join(sorted(valid_levels))}")
+    if solution_complexity not in valid_levels:
+        errors.append(f"solution_complexity must be one of: {', '.join(sorted(valid_levels))}")
+    if solution_risk not in valid_levels:
+        errors.append(f"solution_risk must be one of: {', '.join(sorted(valid_levels))}")
+    if recommendation not in valid_recommendations:
+        errors.append(
+            f"recommendation must be one of: {', '.join(sorted(valid_recommendations))}"
+        )
+    if not isinstance(report, str) or not report.strip():
+        errors.append("report must be a non-empty string")
+    if not isinstance(issue_number, int):
+        errors.append("issue_number must be an integer")
+
+    if errors:
+        return {"status": "error", "message": "Validation failed", "errors": errors}
+
+    # Create agent database if it doesn't exist
+    try:
+        agent_db_path = _create_agent_database()
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to create agent database: {e}"}
+
+    # Load issues from agent database
+    if db_file is not None:
+        agent_db_path = db_file
+
+    try:
+        issues = load_issues_db(agent_db_path)
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to load database: {e}"}
+
+    # Find the issue
+    issue = next((i for i in issues if i["number"] == issue_number), None)
+    if not issue:
+        return {"status": "error", "message": f"Issue #{issue_number} not found"}
+
+    # Ensure recommendations field exists
+    if "recommendations" not in issue:
+        issue["recommendations"] = []
+
+    # Create new recommendation
+    new_recommendation = {
+        "severity": severity,
+        "frequency": frequency,
+        "prevalence": prevalence,
+        "report": report.strip(),
+        "recommendation": recommendation,
+        "solution_complexity": solution_complexity,
+        "solution_risk": solution_risk,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    # Add recommendation
+    issue["recommendations"].append(new_recommendation)
+    recommendation_count = len(issue["recommendations"])
+
+    # Save updated database
+    try:
+        with gzip.open(agent_db_path, "wt") as f:
+            json.dump(issues, f)
+
+        # Clear cache to force reload
+        if agent_db_path in _issues_cache:
+            del _issues_cache[agent_db_path]
+
+        # Generate ordinal number text
+        ordinals = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth"}
+        ordinal_text = ordinals.get(recommendation_count, f"{recommendation_count}th")
+
+        return {
+            "status": "success",
+            "message": f"Added {ordinal_text} recommendation for issue #{issue_number}",
+            "issue_number": issue_number,
+            "recommendation_count": recommendation_count,
+            "recommendation": new_recommendation,
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to save database: {e}"}
+
+
+@mcp.tool()
+def get_first_issue_without_recommendation(db_file: str | None = None) -> dict[str, Any] | None:
+    """Get the first issue without any recommendations."""
+    db_file = _get_preferred_db_file(db_file)
+    issues = load_issues_db(db_file)
+
+    if not issues:
+        return None
+
+    # Find first issue without recommendations
+    for issue in issues:
+        recommendations = issue.get("recommendations", [])
+        if not recommendations or len(recommendations) == 0:
+            return {
+                "number": issue["number"],
+                "title": issue.get("title"),
+                "summary": issue.get("summary"),
+                "url": issue.get("url"),
+                "state": issue.get("state"),
+                "recommendations": recommendations
+            }
+
+    return None
 
 
 def run_mcp_server(
