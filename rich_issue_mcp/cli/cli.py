@@ -27,6 +27,9 @@ def cmd_pull(args) -> None:
         include_closed=args.include_closed,
         limit=args.limit,
         start_date=getattr(args, "start_date", "2025-01-01"),
+        chunk_days=getattr(args, "chunk_days", 7),
+        include_cross_references=getattr(args, "include_cross_references", True),
+        refetch=getattr(args, "refetch", False),
     )
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
@@ -43,7 +46,17 @@ def cmd_pull(args) -> None:
 
 def cmd_enrich(args) -> None:
     """Execute enrich command."""
-    input_path = Path(args.input_file)
+    if args.input_file:
+        input_path = Path(args.input_file)
+    else:
+        # Find the latest raw issues file
+        data_dir = get_data_directory()
+        raw_files = list(data_dir.glob("raw-issues-*.json.gz"))
+        if not raw_files:
+            raise FileNotFoundError("No raw issues files found. Run 'pull' command first.")
+        input_path = max(raw_files, key=lambda p: p.stat().st_mtime)
+        print(f"📁 Using latest raw file: {input_path}")
+    
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
@@ -169,17 +182,31 @@ def main() -> None:
     pull_parser.add_argument(
         "--refetch", action="store_true", help="Refetch all issues from start date"
     )
+    pull_parser.add_argument(
+        "--no-cross-references",
+        dest="include_cross_references",
+        action="store_false",
+        help="Skip fetching cross-reference data from timeline API",
+    )
+    pull_parser.add_argument(
+        "--chunk-days",
+        type=int,
+        default=7,
+        help="Number of days per chunk for date range processing (default: 7)",
+    )
     pull_parser.set_defaults(func=cmd_pull)
 
     # Enrich command
     enrich_parser = subparsers.add_parser(
         "enrich", help="Enrich raw issues with embeddings and metrics"
     )
-    enrich_parser.add_argument("input_file", help="Path to raw issues JSON.gz file")
+    enrich_parser.add_argument("input_file", nargs="?", help="Path to raw issues JSON.gz file (defaults to latest raw file)")
     enrich_parser.add_argument("--model", default="mistral-embed", help="Mistral model")
     enrich_parser.add_argument("--output", help="Output file path")
     enrich_parser.add_argument(
-        "--skip-summaries", action="store_true", help="Skip LLM summarization to save time"
+        "--skip-summaries",
+        action="store_true",
+        help="Skip LLM summarization to save time",
     )
     enrich_parser.set_defaults(func=cmd_enrich)
 

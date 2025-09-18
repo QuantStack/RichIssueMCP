@@ -160,7 +160,7 @@ def find_similar_issues(
 def find_linked_issues(
     issue_number: int, db_file: str | None = None
 ) -> list[dict[str, Any]]:
-    """Find issues referenced in the body/comments of target issue."""
+    """Find cross-referenced issues from the target issue."""
     db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
     target = next((i for i in issues if i["number"] == issue_number), None)
@@ -168,24 +168,7 @@ def find_linked_issues(
     if not target:
         return []
 
-    # Extract issue numbers from text (e.g., #1234, #5678)
-    text = f"{target.get('title', '')} {target.get('body', '')}"
-    for comment in target.get("comments", []):
-        text += f" {comment.get('body', '')}"
-
-    linked_numbers = {int(m.group(1)) for m in re.finditer(r"#(\d+)", text)}
-    linked_numbers.discard(issue_number)  # Remove self-reference
-
-    return [
-        {
-            "number": i["number"],
-            "title": i.get("title"),
-            "summary": i.get("summary"),
-            "url": i.get("url"),
-        }
-        for i in issues
-        if i["number"] in linked_numbers
-    ]
+    return target.get("cross_references", [])
 
 
 @mcp.tool()
@@ -374,9 +357,13 @@ def add_recommendation(
     if prevalence not in valid_levels:
         errors.append(f"prevalence must be one of: {', '.join(sorted(valid_levels))}")
     if solution_complexity not in valid_levels:
-        errors.append(f"solution_complexity must be one of: {', '.join(sorted(valid_levels))}")
+        errors.append(
+            f"solution_complexity must be one of: {', '.join(sorted(valid_levels))}"
+        )
     if solution_risk not in valid_levels:
-        errors.append(f"solution_risk must be one of: {', '.join(sorted(valid_levels))}")
+        errors.append(
+            f"solution_risk must be one of: {', '.join(sorted(valid_levels))}"
+        )
     if recommendation not in valid_recommendations:
         errors.append(
             f"recommendation must be one of: {', '.join(sorted(valid_recommendations))}"
@@ -455,7 +442,9 @@ def add_recommendation(
 
 
 @mcp.tool()
-def get_first_issue_without_recommendation(db_file: str | None = None) -> dict[str, Any] | None:
+def get_first_issue_without_recommendation(
+    db_file: str | None = None,
+) -> dict[str, Any] | None:
     """Get the first issue without any recommendations."""
     db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
@@ -473,7 +462,8 @@ def get_first_issue_without_recommendation(db_file: str | None = None) -> dict[s
                 "summary": issue.get("summary"),
                 "url": issue.get("url"),
                 "state": issue.get("state"),
-                "recommendations": recommendations
+                "cross_references": issue.get("cross_references", []),
+                "recommendations": recommendations,
             }
 
     return None
@@ -485,20 +475,20 @@ def get_issue_by_difficulty(
     db_file: str | None = None,
 ) -> dict[str, Any] | None:
     """Get an issue by difficulty level based on solution complexity and risk.
-    
+
     Easy: low solution_complexity AND low solution_risk
     Medium: medium solution_complexity OR medium solution_risk (but not both high)
     Hard: high solution_complexity OR high solution_risk
-    
+
     Returns the issue with highest engagement (total emojis) for the given difficulty.
     """
     valid_difficulties = {"easy", "medium", "hard"}
     if difficulty not in valid_difficulties:
         return {
             "status": "error",
-            "message": f"difficulty must be one of: {', '.join(sorted(valid_difficulties))}"
+            "message": f"difficulty must be one of: {', '.join(sorted(valid_difficulties))}",
         }
-    
+
     db_file = _get_preferred_db_file(db_file)
     issues = load_issues_db(db_file)
 
@@ -507,7 +497,8 @@ def get_issue_by_difficulty(
 
     # Filter issues that have recommendations
     issues_with_recommendations = [
-        issue for issue in issues
+        issue
+        for issue in issues
         if issue.get("recommendations") and len(issue.get("recommendations", [])) > 0
     ]
 
@@ -516,34 +507,38 @@ def get_issue_by_difficulty(
 
     # Categorize issues by difficulty based on their recommendations
     categorized_issues = []
-    
+
     for issue in issues_with_recommendations:
         recommendations = issue.get("recommendations", [])
-        
+
         # Get the latest recommendation's complexity and risk
         latest_rec = recommendations[-1]  # Most recent recommendation
         complexity = latest_rec.get("solution_complexity", "").lower()
         risk = latest_rec.get("solution_risk", "").lower()
-        
+
         # Categorize based on complexity and risk
         issue_difficulty = None
-        
+
         if complexity == "low" and risk == "low":
             issue_difficulty = "easy"
         elif complexity == "high" or risk == "high":
             issue_difficulty = "hard"
         else:  # medium complexity/risk or mixed low/medium
             issue_difficulty = "medium"
-        
+
         if issue_difficulty == difficulty:
             # Calculate engagement score (total emojis)
-            engagement_score = issue.get("issue_total_emojis", 0) + issue.get("conversation_total_emojis", 0)
-            
-            categorized_issues.append({
-                "issue": issue,
-                "engagement_score": engagement_score,
-                "latest_recommendation": latest_rec
-            })
+            engagement_score = issue.get("issue_total_emojis", 0) + issue.get(
+                "conversation_total_emojis", 0
+            )
+
+            categorized_issues.append(
+                {
+                    "issue": issue,
+                    "engagement_score": engagement_score,
+                    "latest_recommendation": latest_rec,
+                }
+            )
 
     if not categorized_issues:
         return None
@@ -551,7 +546,7 @@ def get_issue_by_difficulty(
     # Return the issue with highest engagement score
     best_issue_data = max(categorized_issues, key=lambda x: x["engagement_score"])
     issue = best_issue_data["issue"]
-    
+
     return {
         "number": issue["number"],
         "title": issue.get("title"),
@@ -562,10 +557,15 @@ def get_issue_by_difficulty(
         "engagement_score": best_issue_data["engagement_score"],
         "issue_emojis": issue.get("issue_total_emojis", 0),
         "conversation_emojis": issue.get("conversation_total_emojis", 0),
-        "solution_complexity": best_issue_data["latest_recommendation"].get("solution_complexity"),
+        "solution_complexity": best_issue_data["latest_recommendation"].get(
+            "solution_complexity"
+        ),
         "solution_risk": best_issue_data["latest_recommendation"].get("solution_risk"),
-        "recommendation": best_issue_data["latest_recommendation"].get("recommendation"),
-        "recommendations_count": len(issue.get("recommendations", []))
+        "recommendation": best_issue_data["latest_recommendation"].get(
+            "recommendation"
+        ),
+        "cross_references": issue.get("cross_references", []),
+        "recommendations_count": len(issue.get("recommendations", [])),
     }
 
 
