@@ -16,6 +16,7 @@ from rich_issue_mcp.enrich.enrich import (
 )
 from rich_issue_mcp.mcp.mcp_server import run_mcp_server
 from rich_issue_mcp.pull.pull import fetch_issues, save_raw_issues
+from rich_issue_mcp.visualize.visualize import visualize_issues
 
 
 def cmd_pull(args) -> None:
@@ -104,6 +105,36 @@ def cmd_enrich(args) -> None:
 def cmd_mcp(args) -> None:
     """Execute MCP server."""
     run_mcp_server(host=args.host, port=args.port, db_file=args.db_file)
+
+
+def cmd_visualize(args) -> None:
+    """Execute visualize command."""
+    if args.input_file:
+        input_path = Path(args.input_file)
+    else:
+        # Find the latest enriched or agent issues file
+        data_dir = get_data_directory()
+        enriched_files = list(data_dir.glob("enriched-issues-*.json.gz"))
+        agent_files = list(data_dir.glob("agent-issues-*.json.gz"))
+        
+        all_files = enriched_files + agent_files
+        if not all_files:
+            raise FileNotFoundError("No enriched or agent issues files found. Run 'enrich' command first.")
+        
+        input_path = max(all_files, key=lambda p: p.stat().st_mtime)
+        print(f"📁 Using latest file: {input_path}")
+    
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_path}")
+    
+    # Determine output directory
+    if args.output:
+        output_dir = Path(args.output)
+    else:
+        basename = input_path.stem.replace(".json", "")
+        output_dir = get_data_directory() / f"visualization-{basename}"
+    
+    visualize_issues(input_path, output_dir, scale=args.scale)
 
 
 def cmd_clean(args) -> None:
@@ -216,6 +247,24 @@ def main() -> None:
     mcp_parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     mcp_parser.add_argument("--db-file", help="Database file path")
     mcp_parser.set_defaults(func=cmd_mcp)
+
+    # Visualize command
+    visualize_parser = subparsers.add_parser(
+        "visualize", help="Create T-SNE visualization and GraphML network from enriched issues"
+    )
+    visualize_parser.add_argument(
+        "input_file", 
+        nargs="?", 
+        help="Path to enriched or agent issues JSON.gz file (defaults to latest enriched/agent file)"
+    )
+    visualize_parser.add_argument("--output", help="Output directory path")
+    visualize_parser.add_argument(
+        "--scale", 
+        type=float, 
+        default=1.0, 
+        help="Scale factor for embedding coordinates (default: 1.0)"
+    )
+    visualize_parser.set_defaults(func=cmd_visualize)
 
     # Clean command
     clean_parser = subparsers.add_parser("clean", help="Clean downloaded data files")

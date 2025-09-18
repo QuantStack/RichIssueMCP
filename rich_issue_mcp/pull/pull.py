@@ -5,6 +5,7 @@ import gzip
 import json
 import os
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -47,15 +48,55 @@ def get_github_token() -> str:
     return token
 
 
-def make_rest_request(url: str, params: dict[str, Any] | None = None) -> requests.Response:
-    """Make a REST API request to GitHub."""
+def make_rest_request(url: str, params: dict[str, Any] | None = None, max_retries: int = 5) -> requests.Response:
+    """Make a REST API request to GitHub with rate limit handling."""
     token = get_github_token()
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "RichIssueMCP/1.0",
     }
-    response = requests.get(url, headers=headers, params=params)
+    
+    for attempt in range(max_retries):
+        response = requests.get(url, headers=headers, params=params)
+        
+        # If successful, return immediately
+        if response.status_code == 200:
+            return response
+        
+        # Handle rate limit errors
+        if response.status_code == 403:
+            try:
+                error_data = response.json()
+                if "rate limit" in error_data.get("message", "").lower():
+                    # Calculate wait time: start with 60 seconds, double each retry
+                    wait_time = 60 * (2 ** attempt)
+                    
+                    # Check if we have rate limit reset info in headers
+                    rate_limit_reset = response.headers.get('X-RateLimit-Reset')
+                    if rate_limit_reset:
+                        reset_time = int(rate_limit_reset)
+                        current_time = int(time.time())
+                        time_until_reset = reset_time - current_time + 10  # Add 10 second buffer
+                        
+                        # Use the shorter of exponential backoff or time until reset
+                        wait_time = min(wait_time, max(time_until_reset, 60))
+                    
+                    print(f"⚠️  Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {wait_time} seconds...")
+                    time.sleep(wait_time)
+                    continue
+            except (ValueError, KeyError):
+                # Not a JSON response or missing fields, treat as non-rate-limit 403
+                pass
+        
+        # For non-rate-limit errors or final attempt, return the response
+        if attempt == max_retries - 1 or response.status_code != 403:
+            return response
+        
+        # For other 403 errors, wait a short time before retry
+        print(f"⚠️  Request failed with 403 (attempt {attempt + 1}/{max_retries}). Waiting 30 seconds...")
+        time.sleep(30)
+    
     return response
 
 
@@ -65,15 +106,7 @@ def get_timeline_cross_references(repo: str, issue_number: int) -> list[dict[str
         # Use REST API to get timeline with cross-referenced events
         timeline_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/timeline"
         
-        # Special headers for timeline API
-        token = get_github_token()
-        headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "RichIssueMCP/1.0",
-        }
-        
-        response = requests.get(timeline_url, headers=headers, params={"per_page": 100})
+        response = make_rest_request(timeline_url, {"per_page": 100})
         
         if response.status_code != 200:
             print(f"⚠️  Failed to get timeline for issue #{issue_number}: {response.status_code}")

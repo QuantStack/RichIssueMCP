@@ -1,0 +1,1 @@
+"""Visualization module for Rich Issue MCP."""
