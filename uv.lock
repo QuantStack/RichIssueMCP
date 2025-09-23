@@ -1243,6 +1243,55 @@ wheels = [
 ]
 
 [[package]]
+name = "rich-issue-mcp"
+source = { editable = "." }
+dependencies = [
+    { name = "diskcache" },
+    { name = "fastmcp" },
+    { name = "ipdb" },
+    { name = "ipython" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "scikit-learn" },
+    { name = "tinydb" },
+    { name = "tinyrecord" },
+    { name = "toml" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "black" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
+    { name = "diskcache", specifier = ">=5.6.3" },
+    { name = "fastmcp", specifier = ">=0.4.0" },
+    { name = "ipdb", specifier = ">=0.13.13" },
+    { name = "ipython", specifier = ">=9.5.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "pandas", specifier = ">=2.0.0" },
+    { name = "pydantic", specifier = ">=2.8.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "requests", specifier = ">=2.28.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
+    { name = "scikit-learn", specifier = ">=1.7.2" },
+    { name = "tinydb", specifier = ">=4.8.2" },
+    { name = "tinyrecord", specifier = ">=0.2.0" },
+    { name = "toml", specifier = ">=0.10.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "rich-rst"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1519,6 +1568,21 @@ wheels = [
 ]
 
 [[package]]
+name = "tinydb"
+version = "4.8.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/79/4af51e2bb214b6ea58f857c51183d92beba85b23f7ba61c983ab3de56c33/tinydb-4.8.2.tar.gz", hash = "sha256:f7dfc39b8d7fda7a1ca62a8dbb449ffd340a117c1206b68c50b1a481fb95181d", size = 32566, upload-time = "2024-10-12T15:24:01.13Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/17/853354204e1ca022d6b7d011ca7f3206c4f8faa3cc743e92609b49c1d83f/tinydb-4.8.2-py3-none-any.whl", hash = "sha256:f97030ee5cbc91eeadd1d7af07ab0e48ceb04aa63d4a983adbaca4cba16e86c3", size = 24888, upload-time = "2024-10-12T15:23:59.833Z" },
+]
+
+[[package]]
+name = "tinyrecord"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/6c/a004d025d9bf1d8af014fd6f22bd6e49e4533d6fbac54f7d4ae7acb3ef5f/tinyrecord-0.2.0.tar.gz", hash = "sha256:eb6dc23601be359ee00f5a3d31a46adf3bad0a16f8d60af216cd67982ca75cf4", size = 5556, upload-time = "2020-07-05T15:43:06.056Z" }
+
+[[package]]
 name = "toml"
 version = "0.10.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1535,51 +1599,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/eb/79/72064e6a701c21830
 wheels = [
     { url = "https://files.pythonhosted.org/packages/00/c0/8f5d070730d7836adc9c9b6408dec68c6ced86b304a9b26a14df072a6e8c/traitlets-5.14.3-py3-none-any.whl", hash = "sha256:b74e89e397b1ed28cc831db7aea759ba6640cb3de13090ca145426688ff1ac4f", size = 85359, upload-time = "2024-04-19T11:11:46.763Z" },
 ]
-
-[[package]]
-name = "rich-issue-mcp"
-source = { editable = "." }
-dependencies = [
-    { name = "diskcache" },
-    { name = "fastmcp" },
-    { name = "ipdb" },
-    { name = "ipython" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pydantic" },
-    { name = "requests" },
-    { name = "scikit-learn" },
-    { name = "toml" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
-    { name = "diskcache", specifier = ">=5.6.3" },
-    { name = "fastmcp", specifier = ">=0.4.0" },
-    { name = "ipdb", specifier = ">=0.13.13" },
-    { name = "ipython", specifier = ">=9.5.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.0" },
-    { name = "numpy", specifier = ">=1.24.0" },
-    { name = "pandas", specifier = ">=2.0.0" },
-    { name = "pydantic", specifier = ">=2.8.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
-    { name = "requests", specifier = ">=2.28.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
-    { name = "scikit-learn", specifier = ">=1.7.2" },
-    { name = "toml", specifier = ">=0.10.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "typing-extensions"
