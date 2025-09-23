@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Main enrichment module for processing raw GitHub issues."""
 
-import gzip
 import hashlib
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -20,18 +18,6 @@ def _get_cache_key(content: str, model: str) -> str:
     """Generate cache key from content and model hash."""
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     return f"{model}:{content_hash}"
-
-
-def load_raw_issues(filepath: Path) -> list[dict[str, Any]]:
-    """Load raw issues from gzipped JSON file."""
-    with gzip.open(filepath, "rt", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_enriched_issues(issues: list[dict[str, Any]], filepath: Path) -> None:
-    """Save enriched issues to gzipped JSON file."""
-    with gzip.open(filepath, "wt", encoding="utf-8") as f:
-        json.dump(issues, f, indent=None, separators=(",", ":"))
 
 
 def _sanitize_content(content: str) -> str:
@@ -98,7 +84,7 @@ def get_mistral_embedding(
         if len(sanitized_content) > 20000:
             print("🔄 Retrying with title only...")
             try:
-                title_only = _sanitize_content(content.split('\n')[0])
+                title_only = _sanitize_content(content.split("\n")[0])
                 if title_only and len(title_only) < 1000:
                     payload = {"model": model, "input": [title_only]}
                     response = requests.post(
@@ -177,7 +163,7 @@ def get_issue_embedding(
     body = issue.get("body", "") or ""
     if len(body) > 15000:  # Reduced from 30000
         body = body[:15000] + "... [truncated]"
-    
+
     # Limit comments to prevent excessive length
     comments = issue.get("comments", [])
     comment_texts = []
@@ -189,7 +175,7 @@ def get_issue_embedding(
             break
         comment_texts.append(comment_body)
         total_comment_length += len(comment_body)
-    
+
     content_parts = [
         title,
         body,
@@ -312,12 +298,12 @@ def create_conversation_column(issue: dict[str, Any]) -> str:
             # Truncate individual comments if too long
             if len(comment_body) > 5000:
                 comment_body = comment_body[:5000] + "... [truncated]"
-            
+
             # Stop adding comments if total gets too long
             if total_comment_chars + len(comment_body) > 25000:
                 parts.append("[... more comments truncated for conversation]")
                 break
-                
+
             comment_part = f"{comment_author}: {comment_body.strip()}"
             # Add comment-level emoji counts (using reactions.totalCount for REST API)
             reaction_count = comment.get("reactions", {}).get("totalCount", 0)
@@ -333,7 +319,7 @@ def calc_reaction_metrics(issue: dict[str, Any]) -> dict[str, int]:
     """Calculate reaction metrics for issue and comments."""
     # Handle both GraphQL format (reactionGroups) and REST format (reactions.totalCount)
     issue_reactions = calc_reaction_totals(issue.get("reactionGroups", []))
-    
+
     # If no reactionGroups (REST API), try to get total from reactions field
     if issue_reactions["total"] == 0 and "reactions" in issue:
         issue_total = issue.get("reactions", {}).get("totalCount", 0)
@@ -343,7 +329,7 @@ def calc_reaction_metrics(issue: dict[str, Any]) -> dict[str, int]:
     for comment in issue.get("comments", []):
         # Try GraphQL format first
         comment_reactions = calc_reaction_totals(comment.get("reactionGroups", []))
-        
+
         # If no reactionGroups (REST API), use reactions.totalCount
         if comment_reactions["total"] == 0 and "reactions" in comment:
             comment_total = comment.get("reactions", {}).get("totalCount", 0)

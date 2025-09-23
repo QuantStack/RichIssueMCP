@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """Pull GitHub issues using REST API with timeline for cross-references."""
 
-import gzip
-import json
-import os
-import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,7 +9,8 @@ from typing import Any
 import requests
 import toml
 
-from rich_issue_mcp.config import get_cache, get_data_directory
+from rich_issue_mcp.config import get_cache
+from rich_issue_mcp.database import load_issues
 
 
 def get_github_token() -> str | None:
@@ -35,7 +32,9 @@ def get_github_token() -> str | None:
         )
 
 
-def make_rest_request(url: str, params: dict[str, Any] | None = None, max_retries: int = 5) -> requests.Response:
+def make_rest_request(
+    url: str, params: dict[str, Any] | None = None, max_retries: int = 5
+) -> requests.Response:
     """Make a REST API request to GitHub with rate limit handling."""
     token = get_github_token()
     headers = {
@@ -43,47 +42,53 @@ def make_rest_request(url: str, params: dict[str, Any] | None = None, max_retrie
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "RichIssueMCP/1.0",
     }
-    
+
     for attempt in range(max_retries):
         response = requests.get(url, headers=headers, params=params)
-        
+
         # If successful, return immediately
         if response.status_code == 200:
             return response
-        
+
         # Handle rate limit errors
         if response.status_code == 403:
             try:
                 error_data = response.json()
                 if "rate limit" in error_data.get("message", "").lower():
                     # Calculate wait time: start with 60 seconds, double each retry
-                    wait_time = 60 * (2 ** attempt)
-                    
+                    wait_time = 60 * (2**attempt)
+
                     # Check if we have rate limit reset info in headers
-                    rate_limit_reset = response.headers.get('X-RateLimit-Reset')
+                    rate_limit_reset = response.headers.get("X-RateLimit-Reset")
                     if rate_limit_reset:
                         reset_time = int(rate_limit_reset)
                         current_time = int(time.time())
-                        time_until_reset = reset_time - current_time + 10  # Add 10 second buffer
-                        
+                        time_until_reset = (
+                            reset_time - current_time + 10
+                        )  # Add 10 second buffer
+
                         # Use the shorter of exponential backoff or time until reset
                         wait_time = min(wait_time, max(time_until_reset, 60))
-                    
-                    print(f"⚠️  Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {wait_time} seconds...")
+
+                    print(
+                        f"⚠️  Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {wait_time} seconds..."
+                    )
                     time.sleep(wait_time)
                     continue
             except (ValueError, KeyError):
                 # Not a JSON response or missing fields, treat as non-rate-limit 403
                 pass
-        
+
         # For non-rate-limit errors or final attempt, return the response
         if attempt == max_retries - 1 or response.status_code != 403:
             return response
-        
+
         # For other 403 errors, wait a short time before retry
-        print(f"⚠️  Request failed with 403 (attempt {attempt + 1}/{max_retries}). Waiting 30 seconds...")
+        print(
+            f"⚠️  Request failed with 403 (attempt {attempt + 1}/{max_retries}). Waiting 30 seconds..."
+        )
         time.sleep(30)
-    
+
     return response
 
 
@@ -91,22 +96,26 @@ def get_timeline_cross_references(repo: str, issue_number: int) -> list[dict[str
     """Get cross-referenced issues and PRs using REST API timeline."""
     try:
         # Use REST API to get timeline with cross-referenced events
-        timeline_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/timeline"
-        
+        timeline_url = (
+            f"https://api.github.com/repos/{repo}/issues/{issue_number}/timeline"
+        )
+
         response = make_rest_request(timeline_url, {"per_page": 100})
-        
+
         if response.status_code != 200:
-            print(f"⚠️  Failed to get timeline for issue #{issue_number}: {response.status_code}")
+            print(
+                f"⚠️  Failed to get timeline for issue #{issue_number}: {response.status_code}"
+            )
             return []
-        
+
         timeline_events = response.json()
-        
+
         # Filter and transform cross-referenced events
         cross_references = []
         for event in timeline_events:
             if event.get("event") == "cross-referenced" and event.get("source"):
                 source = event["source"]
-                
+
                 # Determine if it's an issue or PR
                 if "issue" in source:
                     item = source["issue"]
@@ -116,18 +125,18 @@ def get_timeline_cross_references(repo: str, issue_number: int) -> list[dict[str
                     item_type = "pr"
                 else:
                     continue
-                
+
                 cross_ref = {
                     "number": item.get("number"),
                     "type": item_type,
                     "title": item.get("title"),
                     "url": item.get("html_url"),
-                    "author": item.get("user", {}).get("login")
+                    "author": item.get("user", {}).get("login"),
                 }
                 cross_references.append(cross_ref)
-        
+
         return cross_references
-        
+
     except Exception as e:
         print(f"⚠️  Failed to get cross-references for issue #{issue_number}: {e}")
         return []
@@ -142,45 +151,51 @@ def fetch_issues_chunk_rest(
 ) -> list[dict[str, Any]]:
     """Fetch a chunk of issues from GitHub using REST API search with date range filtering."""
     start_date, end_date = date_range
-    
+
     print(f"🔍 Fetching chunk {start_date}..{end_date} (will use cache if available)")
-    
+
     # Build search query with date range
     state_filter = "is:issue"
     if not include_closed:
         state_filter += " is:open"
-    
+
     search_query = f"repo:{repo} {state_filter} updated:{start_date}..{end_date}"
-    
+
     # Search for issues
     search_url = "https://api.github.com/search/issues"
     search_params = {
         "q": search_query,
         "per_page": min(limit if limit else 100, 100),
         "sort": "updated",
-        "order": "desc"
+        "order": "desc",
     }
-    
+
     response = make_rest_request(search_url, search_params)
-    
+
     if response.status_code != 200:
-        raise Exception(f"REST API search failed: {response.status_code} - {response.text}")
-    
+        raise Exception(
+            f"REST API search failed: {response.status_code} - {response.text}"
+        )
+
     data = response.json()
     issues = data["items"]
-    
-    print(f"    📄 REST search: {len(issues)} issues, Rate limit: {response.headers.get('X-RateLimit-Remaining', 'unknown')}")
-    
+
+    print(
+        f"    📄 REST search: {len(issues)} issues, Rate limit: {response.headers.get('X-RateLimit-Remaining', 'unknown')}"
+    )
+
     # Transform issues and fetch additional data
     transformed_issues = []
-    
+
     for issue in issues:
         issue_number = issue["number"]
-        
+
         # Get comments for this issue
-        comments_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+        comments_url = (
+            f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+        )
         comments_response = make_rest_request(comments_url, {"per_page": 100})
-        
+
         # Get comments as a simple list
         comments_list = []
         if comments_response.status_code == 200:
@@ -193,14 +208,16 @@ def fetch_issues_chunk_rest(
                     "updatedAt": comment["updated_at"],
                     "author": {"login": comment["user"]["login"]},
                     "authorAssociation": comment.get("author_association", "NONE"),
-                    "reactions": {"totalCount": comment.get("reactions", {}).get("total_count", 0)}
+                    "reactions": {
+                        "totalCount": comment.get("reactions", {}).get("total_count", 0)
+                    },
                 }
                 for comment in comments
             ]
-        
+
         # Get cross-references using gh CLI timeline API
         cross_references = get_timeline_cross_references(repo, issue_number)
-        
+
         # Transform to match expected format
         transformed_issue = {
             "number": issue["number"],
@@ -216,17 +233,16 @@ def fetch_issues_chunk_rest(
                 for label in issue.get("labels", [])
             ],
             "assignees": [
-                {"login": assignee["login"]}
-                for assignee in issue.get("assignees", [])
+                {"login": assignee["login"]} for assignee in issue.get("assignees", [])
             ],
             "comments": comments_list,  # Direct list of comments
             "number_of_comments": len(comments_list),  # Separate count column
             "reactionGroups": [],  # REST API doesn't provide detailed reaction groups easily
-            "cross_references": cross_references
+            "cross_references": cross_references,
         }
-        
+
         transformed_issues.append(transformed_issue)
-    
+
     return transformed_issues
 
 
@@ -280,15 +296,10 @@ def fetch_issues(
     # Load existing issues to merge with new/updated ones
     existing_issues = []
     try:
-        data_dir = get_data_directory()
-        repo_name = repo.replace("/", "-")
-        existing_file = data_dir / f"raw-issues-{repo_name}.json.gz"
-
-        if existing_file.exists() and not refetch:
-            with gzip.open(existing_file, "rt", encoding="utf-8") as f:
-                existing_issues = json.load(f)
+        if not refetch:
+            existing_issues = load_issues(repo)
             print(f"📂 Loaded {len(existing_issues)} existing issues for merging")
-        elif refetch:
+        else:
             print("🔄 Refetch requested - will fetch all issues from start date")
     except Exception as e:
         print(f"⚠️  Could not load existing issues: {e}")
@@ -353,11 +364,3 @@ def fetch_issues(
         print("✅ Cross-references fetched via REST timeline API")
 
     return merged_issues
-
-
-def save_raw_issues(issues: list[dict[str, Any]], filepath: Path) -> None:
-    """Save raw issues to gzipped JSON file."""
-    filepath.parent.mkdir(exist_ok=True)
-
-    with gzip.open(filepath, "wt", encoding="utf-8") as f:
-        json.dump(issues, f, indent=None, separators=(",", ":"))

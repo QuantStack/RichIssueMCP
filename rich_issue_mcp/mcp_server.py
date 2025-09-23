@@ -1,106 +1,27 @@
 """FastMCP server for accessing Rich Issues database."""
 
-import gzip
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
 
-from rich_issue_mcp.config import get_data_file_path
+from rich_issue_mcp.database import load_issues, save_issues
 
 mcp = FastMCP("Rich Issues Server")
-_issues_cache: dict[str, list[dict[str, Any]]] = {}
 
 
-def _get_default_db_file() -> str:
-    """Get default database file path from config."""
-    try:
-        return str(get_data_file_path("enriched-issues-jupyterlab-jupyterlab.json.gz"))
-    except (FileNotFoundError, ValueError):
-        # Fallback if config not available
-        return "data/enriched-issues-jupyterlab-jupyterlab.json.gz"
-
-
-def _get_agent_db_file() -> str:
-    """Get agent database file path."""
-    try:
-        base_path = get_data_file_path("agent-issues-jupyterlab-jupyterlab.json.gz")
-        return str(base_path)
-    except (FileNotFoundError, ValueError):
-        # Fallback if config not available
-        return "data/agent-issues-jupyterlab-jupyterlab.json.gz"
-
-
-def _get_preferred_db_file(db_file: str | None = None) -> str:
-    """Get preferred database file - agent DB if exists, otherwise default."""
-    if db_file is not None:
-        return db_file
-
-    agent_db = _get_agent_db_file()
-    if Path(agent_db).exists():
-        return agent_db
-
-    return _get_default_db_file()
-
-
-def _create_agent_database() -> str:
-    """Create agent database as copy of enriched database if it doesn't exist."""
-    agent_db_path = _get_agent_db_file()
-
-    if Path(agent_db_path).exists():
-        return agent_db_path
-
-    # Copy from enriched database
-    enriched_db_path = _get_default_db_file()
-    if not Path(enriched_db_path).exists():
-        raise FileNotFoundError(f"Source database not found: {enriched_db_path}")
-
-    # Load enriched data
-    with gzip.open(enriched_db_path, "rt") as f:
-        issues = json.load(f)
-
-    # Add empty recommendations field to each issue
-    for issue in issues:
-        issue["recommendations"] = []
-
-    # Save as agent database
-    Path(agent_db_path).parent.mkdir(parents=True, exist_ok=True)
-    with gzip.open(agent_db_path, "wt") as f:
-        json.dump(issues, f)
-
-    # Clear cache for the new file
-    if agent_db_path in _issues_cache:
-        del _issues_cache[agent_db_path]
-
-    return agent_db_path
-
-
-def load_issues_db(db_file: str) -> list[dict[str, Any]]:
-    """Load and cache issues from compressed JSON database."""
-    if db_file in _issues_cache:
-        return _issues_cache[db_file]
-
-    db_path = Path(db_file)
-    if not db_path.exists():
-        raise FileNotFoundError(f"Database file not found: {db_file}")
-
-    try:
-        with gzip.open(db_path, "rt") as f:
-            issues: list[dict[str, Any]] = json.load(f)
-        _issues_cache[db_file] = issues
-        return issues
-    except Exception as e:
-        raise RuntimeError(f"Failed to load database: {e}") from e
+def _get_repo_name(repo: str | None = None) -> str:
+    """Get repository name, defaulting to jupyterlab/jupyterlab."""
+    return repo or "jupyterlab/jupyterlab"
 
 
 @mcp.tool()
-def get_issue(issue_number: int, db_file: str | None = None) -> dict[str, Any] | None:
+def get_issue(issue_number: int, repo: str | None = None) -> dict[str, Any] | None:
     """Get specific issue summary and number."""
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
     issue = next((i for i in issues if i["number"] == issue_number), None)
     if not issue:
         return None
@@ -117,11 +38,11 @@ def find_similar_issues(
     issue_number: int,
     threshold: float = 0.8,
     limit: int = 10,
-    db_file: str | None = None,
+    repo: str | None = None,
 ) -> list[dict[str, Any]]:
     """Find issues similar to target issue using embeddings."""
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
     target = next((i for i in issues if i["number"] == issue_number), None)
 
     if not target or not target.get("embedding"):
@@ -158,11 +79,11 @@ def find_similar_issues(
 
 @mcp.tool()
 def find_linked_issues(
-    issue_number: int, db_file: str | None = None
+    issue_number: int, repo: str | None = None
 ) -> list[dict[str, Any]]:
     """Find cross-referenced issues from the target issue."""
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
     target = next((i for i in issues if i["number"] == issue_number), None)
 
     if not target:
@@ -173,11 +94,11 @@ def find_linked_issues(
 
 @mcp.tool()
 def get_issue_metrics(
-    issue_number: int, db_file: str | None = None
+    issue_number: int, repo: str | None = None
 ) -> dict[str, Any] | None:
     """Get enrichment metrics for a specific issue."""
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
     issue = next((i for i in issues if i["number"] == issue_number), None)
 
     if not issue:
@@ -197,10 +118,10 @@ def get_issue_metrics(
 
 
 @mcp.tool()
-def get_available_sort_columns(db_file: str | None = None) -> list[str]:
+def get_available_sort_columns(repo: str | None = None) -> list[str]:
     """Get list of available columns that can be used for sorting issues."""
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
 
     if not issues:
         return []
@@ -245,11 +166,11 @@ def get_top_issues(
     sort_column: str,
     limit: int = 10,
     descending: bool = True,
-    db_file: str | None = None,
+    repo: str | None = None,
 ) -> list[dict[str, Any]]:
     """Get top n issues sorted by a specific column from the enriched database."""
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
 
     if not issues:
         return []
@@ -289,11 +210,11 @@ def get_top_issues(
 @mcp.tool()
 def export_all_open_issues(
     output_path: str,
-    db_file: str | None = None,
+    repo: str | None = None,
 ) -> dict[str, Any]:
     """Export all open issues to a JSON file with name, title, url, and summary."""
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
 
     if not issues:
         return {"status": "error", "message": "No issues found in database"}
@@ -341,9 +262,9 @@ def add_recommendation(
     recommendation: str,
     solution_complexity: str,
     solution_risk: str,
-    db_file: str | None = None,
+    repo: str | None = None,
 ) -> dict[str, Any]:
-    """Add a recommendation to an issue in the agent database."""
+    """Add a recommendation to an issue in the database."""
 
     # Validate input parameters
     valid_levels = {"low", "medium", "high"}
@@ -376,18 +297,10 @@ def add_recommendation(
     if errors:
         return {"status": "error", "message": "Validation failed", "errors": errors}
 
-    # Create agent database if it doesn't exist
-    try:
-        agent_db_path = _create_agent_database()
-    except Exception as e:
-        return {"status": "error", "message": f"Failed to create agent database: {e}"}
-
-    # Load issues from agent database
-    if db_file is not None:
-        agent_db_path = db_file
+    repo = _get_repo_name(repo)
 
     try:
-        issues = load_issues_db(agent_db_path)
+        issues = load_issues(repo)
     except Exception as e:
         return {"status": "error", "message": f"Failed to load database: {e}"}
 
@@ -418,12 +331,7 @@ def add_recommendation(
 
     # Save updated database
     try:
-        with gzip.open(agent_db_path, "wt") as f:
-            json.dump(issues, f)
-
-        # Clear cache to force reload
-        if agent_db_path in _issues_cache:
-            del _issues_cache[agent_db_path]
+        save_issues(repo, issues)
 
         # Generate ordinal number text
         ordinals = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth"}
@@ -443,11 +351,11 @@ def add_recommendation(
 
 @mcp.tool()
 def get_first_issue_without_recommendation(
-    db_file: str | None = None,
+    repo: str | None = None,
 ) -> dict[str, Any] | None:
     """Get the first issue without any recommendations."""
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
 
     if not issues:
         return None
@@ -472,7 +380,7 @@ def get_first_issue_without_recommendation(
 @mcp.tool()
 def get_issue_by_difficulty(
     difficulty: str,
-    db_file: str | None = None,
+    repo: str | None = None,
 ) -> dict[str, Any] | None:
     """Get an issue by difficulty level based on solution complexity and risk.
 
@@ -489,8 +397,8 @@ def get_issue_by_difficulty(
             "message": f"difficulty must be one of: {', '.join(sorted(valid_difficulties))}",
         }
 
-    db_file = _get_preferred_db_file(db_file)
-    issues = load_issues_db(db_file)
+    repo = _get_repo_name(repo)
+    issues = load_issues(repo)
 
     if not issues:
         return None
@@ -570,16 +478,13 @@ def get_issue_by_difficulty(
 
 
 def run_mcp_server(
-    host: str = "localhost", port: int = 8000, db_file: str | None = None
+    host: str = "localhost", port: int = 8000, repo: str | None = None
 ) -> None:
     """Run the MCP server with specified configuration."""
-
-    # Set default db_file if not provided
-    if db_file is None:
-        db_file = _get_default_db_file()
+    repo = _get_repo_name(repo)
 
     print("🚀 Starting MCP server")
-    print(f"📂 Using database: {db_file}")
+    print(f"📂 Using repository: {repo}")
 
     # Run with stdio transport (default for MCP)
     mcp.run()
@@ -593,7 +498,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--host", default="localhost", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
-    parser.add_argument("--db-file", help="Database file path")
+    parser.add_argument("--repo", help="Repository name")
 
     args = parser.parse_args()
-    run_mcp_server(args.host, args.port, args.db_file)
+    run_mcp_server(args.host, args.port, args.repo)

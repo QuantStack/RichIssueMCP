@@ -4,19 +4,18 @@
 import argparse
 from pathlib import Path
 
-from rich_issue_mcp.config import get_config, get_data_directory, get_data_file_path
-from rich_issue_mcp.enrich.enrich import (
+from rich_issue_mcp.config import get_config, get_data_directory
+from rich_issue_mcp.database import load_issues, save_issues
+from rich_issue_mcp.enrich import (
     add_k4_distances,
     add_quartile_columns,
     add_summaries,
     enrich_issue,
-    load_raw_issues,
     print_stats,
-    save_enriched_issues,
 )
-from rich_issue_mcp.mcp.mcp_server import run_mcp_server
-from rich_issue_mcp.pull.pull import fetch_issues, save_raw_issues
-from rich_issue_mcp.visualize.visualize import visualize_issues
+from rich_issue_mcp.mcp_server import run_mcp_server
+from rich_issue_mcp.pull import fetch_issues
+from rich_issue_mcp.visualize import visualize_issues
 
 
 def cmd_pull(args) -> None:
@@ -34,44 +33,14 @@ def cmd_pull(args) -> None:
     )
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
-    # Determine output path
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        repo_name = args.repo.replace("/", "-")
-        output_path = get_data_file_path(f"raw-issues-{repo_name}.json.gz")
-
-    save_raw_issues(raw_issues, output_path)
-    print(f"✅ Raw issue database saved to {output_path}")
+    save_issues(args.repo, raw_issues)
+    print("✅ Raw issue database saved to TinyDB")
 
 
 def cmd_enrich(args) -> None:
     """Execute enrich command."""
-    if args.input_file:
-        input_path = Path(args.input_file)
-    else:
-        # Find the latest raw issues file
-        data_dir = get_data_directory()
-        raw_files = list(data_dir.glob("raw-issues-*.json.gz"))
-        if not raw_files:
-            raise FileNotFoundError("No raw issues files found. Run 'pull' command first.")
-        input_path = max(raw_files, key=lambda p: p.stat().st_mtime)
-        print(f"📁 Using latest raw file: {input_path}")
-    
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
-
-    # Determine output path
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        basename = input_path.name.replace("raw-", "enriched-")
-        output_path = get_data_file_path(basename)
-
-    output_path.parent.mkdir(exist_ok=True)
-
-    print(f"🔍 Loading raw issues from {input_path}...")
-    raw_issues = load_raw_issues(input_path)
+    print(f"🔍 Loading raw issues from {args.repo}...")
+    raw_issues = load_issues(args.repo)
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
     # Get API key from config
@@ -97,14 +66,14 @@ def cmd_enrich(args) -> None:
     print("🔧 Computing k-4 nearest neighbor distances...")
     enriched = add_k4_distances(enriched)
 
-    save_enriched_issues(enriched, output_path)
-    print(f"✅ Enriched issue database saved to {output_path}")
+    save_issues(args.repo, enriched)
+    print("✅ Enriched issue database saved to TinyDB")
     print_stats(enriched)
 
 
 def cmd_mcp(args) -> None:
     """Execute MCP server."""
-    run_mcp_server(host=args.host, port=args.port, db_file=args.db_file)
+    run_mcp_server(host=args.host, port=args.port, repo=args.repo)
 
 
 def cmd_visualize(args) -> None:
@@ -116,24 +85,26 @@ def cmd_visualize(args) -> None:
         data_dir = get_data_directory()
         enriched_files = list(data_dir.glob("enriched-issues-*.json.gz"))
         agent_files = list(data_dir.glob("agent-issues-*.json.gz"))
-        
+
         all_files = enriched_files + agent_files
         if not all_files:
-            raise FileNotFoundError("No enriched or agent issues files found. Run 'enrich' command first.")
-        
+            raise FileNotFoundError(
+                "No enriched or agent issues files found. Run 'enrich' command first."
+            )
+
         input_path = max(all_files, key=lambda p: p.stat().st_mtime)
         print(f"📁 Using latest file: {input_path}")
-    
+
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
-    
+
     # Determine output directory
     if args.output:
         output_dir = Path(args.output)
     else:
         basename = input_path.stem.replace(".json", "")
         output_dir = get_data_directory() / f"visualization-{basename}"
-    
+
     visualize_issues(input_path, output_dir, scale=args.scale)
 
 
@@ -201,10 +172,11 @@ def main() -> None:
         "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to analyze"
     )
     pull_parser.add_argument(
-        "--exclude-closed", action="store_true", help="Exclude closed issues (default: include all)"
+        "--exclude-closed",
+        action="store_true",
+        help="Exclude closed issues (default: include all)",
     )
     pull_parser.add_argument("--limit", "-l", type=int, help="Limit number of issues")
-    pull_parser.add_argument("--output", help="Output file path")
     pull_parser.add_argument(
         "--start-date",
         default="2025-01-01",
@@ -231,9 +203,10 @@ def main() -> None:
     enrich_parser = subparsers.add_parser(
         "enrich", help="Enrich raw issues with embeddings and metrics"
     )
-    enrich_parser.add_argument("input_file", nargs="?", help="Path to raw issues JSON.gz file (defaults to latest raw file)")
+    enrich_parser.add_argument(
+        "repo", help="GitHub repository (e.g., 'jupyterlab/jupyterlab')"
+    )
     enrich_parser.add_argument("--model", default="mistral-embed", help="Mistral model")
-    enrich_parser.add_argument("--output", help="Output file path")
     enrich_parser.add_argument(
         "--skip-summaries",
         action="store_true",
@@ -245,24 +218,27 @@ def main() -> None:
     mcp_parser = subparsers.add_parser("mcp", help="Start MCP server")
     mcp_parser.add_argument("--host", default="localhost", help="Host to bind to")
     mcp_parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
-    mcp_parser.add_argument("--db-file", help="Database file path")
+    mcp_parser.add_argument(
+        "--repo", help="Repository name (defaults to jupyterlab/jupyterlab)"
+    )
     mcp_parser.set_defaults(func=cmd_mcp)
 
     # Visualize command
     visualize_parser = subparsers.add_parser(
-        "visualize", help="Create T-SNE visualization and GraphML network from enriched issues"
+        "visualize",
+        help="Create T-SNE visualization and GraphML network from enriched issues",
     )
     visualize_parser.add_argument(
-        "input_file", 
-        nargs="?", 
-        help="Path to enriched or agent issues JSON.gz file (defaults to latest enriched/agent file)"
+        "input_file",
+        nargs="?",
+        help="Path to enriched or agent issues JSON.gz file (defaults to latest enriched/agent file)",
     )
     visualize_parser.add_argument("--output", help="Output directory path")
     visualize_parser.add_argument(
-        "--scale", 
-        type=float, 
-        default=1.0, 
-        help="Scale factor for embedding coordinates (default: 1.0)"
+        "--scale",
+        type=float,
+        default=1.0,
+        help="Scale factor for embedding coordinates (default: 1.0)",
     )
     visualize_parser.set_defaults(func=cmd_visualize)
 
