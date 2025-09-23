@@ -13,10 +13,10 @@ from typing import Any
 import requests
 import toml
 
-from rich_issue_mcp.config import get_data_directory
+from rich_issue_mcp.config import get_cache, get_data_directory
 
 
-def get_github_token() -> str:
+def get_github_token() -> str | None:
     """Get GitHub token from config or environment."""
     # Try config file first
     config_path = Path("config.toml")
@@ -29,23 +29,10 @@ def get_github_token() -> str:
                 return token
         except Exception:
             pass
-
-    # Fall back to gh CLI
-    try:
-        result = subprocess.run(
-            ["gh", "auth", "token"], capture_output=True, text=True, check=True
-        )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        pass
-
-    # Fall back to environment variable
-    token = os.getenv("GITHUB_TOKEN")
-    if not token:
+    else:
         raise ValueError(
             "No GitHub token found. Set token in config.toml, use 'gh auth login', or set GITHUB_TOKEN"
         )
-    return token
 
 
 def make_rest_request(url: str, params: dict[str, Any] | None = None, max_retries: int = 5) -> requests.Response:
@@ -146,14 +133,17 @@ def get_timeline_cross_references(repo: str, issue_number: int) -> list[dict[str
         return []
 
 
+@get_cache().memoize(typed=True)  # Cache with no expiration, type-sensitive
 def fetch_issues_chunk_rest(
     repo: str,
     date_range: tuple[str, str],
-    include_closed: bool = False,
+    include_closed: bool = True,
     limit: int | None = 500,
 ) -> list[dict[str, Any]]:
     """Fetch a chunk of issues from GitHub using REST API search with date range filtering."""
     start_date, end_date = date_range
+    
+    print(f"🔍 Fetching chunk {start_date}..{end_date} (will use cache if available)")
     
     # Build search query with date range
     state_filter = "is:issue"
@@ -278,7 +268,7 @@ def merge_issues(
 
 def fetch_issues(
     repo: str,
-    include_closed: bool = False,
+    include_closed: bool = True,
     limit: int | None = 500,
     start_date: str = "2025-01-01",
     chunk_days: int = 7,

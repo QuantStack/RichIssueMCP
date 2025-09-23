@@ -25,7 +25,7 @@ def cmd_pull(args) -> None:
 
     raw_issues = fetch_issues(
         repo=args.repo,
-        include_closed=args.include_closed,
+        include_closed=not args.exclude_closed,  # Invert the flag
         limit=args.limit,
         start_date=getattr(args, "start_date", "2025-01-01"),
         chunk_days=getattr(args, "chunk_days", 7),
@@ -201,7 +201,7 @@ def main() -> None:
         "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to analyze"
     )
     pull_parser.add_argument(
-        "--include-closed", "-c", action="store_true", help="Include closed issues"
+        "--exclude-closed", action="store_true", help="Exclude closed issues (default: include all)"
     )
     pull_parser.add_argument("--limit", "-l", type=int, help="Limit number of issues")
     pull_parser.add_argument("--output", help="Output file path")
