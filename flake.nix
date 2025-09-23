@@ -48,6 +48,11 @@
             setuptools = [];
           };
         });
+        tinyrecord = _prev.tinyrecord.overrideAttrs (oldAttrs: {
+          nativeBuildInputs = oldAttrs.nativeBuildInputs ++ _prev.resolveBuildSystem {
+            setuptools = [];
+          };
+        });
         numba = _prev.numba.overrideAttrs (oldAttrs: {
           nativeBuildInputs = oldAttrs.nativeBuildInputs ++ _prev.resolveBuildSystem {
             setuptools = [];
