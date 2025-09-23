@@ -98,7 +98,7 @@ Python development uses standard pip/conda installation and pytest for testing.
 
 ## Issue Triage Workflow
 
-When analyzing GitHub issues for prioritization, follow this systematic approach:
+When triaging GitHub issues follow this systematic approach:
 
 ### 1. Issue Selection and Data Gathering
 
@@ -118,16 +118,18 @@ Use Rich Issue MCP tools for efficient issue management:
 - `mcp__rich_issue_mcp__get_top_issues` - Get top N issues by metric
 - `mcp__rich_issue_mcp__export_all_open_issues` - Export issue data to JSON
 
+Use the Deepwiki mcp if available to ask about this issue
+
 ### 2. Assessment Framework
 
-**Severity** (how strongly are Jupyter workflows affected?):
-- **High**: Breaks core functionality, blocks common workflows
-- **Medium**: Impacts user experience but workarounds exist
-- **Low**: Minor inconvenience or edge case
+**Severity** (how strongly are users affected?):
+- **High**: Breaks core functionality, blocks workflows and no or only difficult workarounds only.
+- **Medium**: Impacts user experience but usable workarounds within Jupyter exist.
+- **Low**: Minor inconvenience or edge case.
 
-**Frequency** (how often during normal use is this encountered?):
-- **High**: Daily occurrence for typical users
-- **Medium**: Weekly/monthly occurrence
+**Frequency** (how often is this encountered by affected users?):
+- **High**: Daily
+- **Medium**: Weekly/monthly
 - **Low**: Rare or specific use cases only
 
 **Fraction** (what portion of user base is affected?):
@@ -140,8 +142,10 @@ Use Rich Issue MCP tools for efficient issue management:
 Evaluate using JupyterLab architecture knowledge:
 - Is the issue still relevant? (May have been fixed in recent versions)
 - Which packages would require modification?
-- Implementation complexity and potential side effects
+- Solution complexity and potential side effects/risks
 - Alignment with existing patterns and architectural decisions
+
+Use the deepwiki mcp as well to answer these (only ask a single question).
 
 ### 4. Final Recommendation
 
