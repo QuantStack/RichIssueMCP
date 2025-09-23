@@ -111,3 +111,24 @@ def get_data_file_path(filename: str) -> Path:
         Absolute path to the file in the data directory
     """
     return get_data_directory() / filename
+
+
+def get_alignment_date() -> str:
+    """
+    Get the date alignment anchor from configuration.
+
+    This date is used to align date ranges to improve cache hits.
+    All date ranges will be aligned such that they end/begin on
+    boundaries that are multiples of chunk_days from this anchor.
+
+    Returns:
+        ISO date string (YYYY-MM-DD) for alignment anchor
+        Defaults to "2024-01-01" if not configured
+    """
+    try:
+        config = get_config()
+        pull_config = config.get("pull", {})
+        return pull_config.get("alignment_date", "2024-01-01")
+    except (FileNotFoundError, ValueError):
+        # Use default if config not available
+        return "2024-01-01"

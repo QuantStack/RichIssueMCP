@@ -28,8 +28,11 @@ def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
     """Save issues to TinyDB database using TinyRecord for transaction safety."""
     db = get_database(repo)
 
+    # Clear existing data first
+    db.truncate()
+    
+    # Insert all new issues in a transaction
     with transaction(db) as tr:
-        tr.truncate()
         tr.insert_multiple(issues)
 
 

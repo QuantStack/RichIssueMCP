@@ -9,7 +9,7 @@ from typing import Any
 import requests
 import toml
 
-from rich_issue_mcp.config import get_cache
+from rich_issue_mcp.config import get_alignment_date, get_cache
 from rich_issue_mcp.database import load_issues
 
 
@@ -247,9 +247,12 @@ def fetch_issues_chunk_rest(
 
 
 def generate_date_ranges_rest(
-    start_date: str, end_date: str | None = None, days: int = 7
+    start_date: str,
+    end_date: str | None = None,
+    days: int = 7,
+    alignment_date: str | None = None,
 ) -> list[tuple[str, str]]:
-    """Generate date ranges for REST API search filtering (start..end pairs)."""
+    """Generate date ranges for REST API search filtering with alignment for cache optimization."""
     start = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
     end = (
         datetime.now().replace(tzinfo=start.tzinfo)
@@ -257,9 +260,62 @@ def generate_date_ranges_rest(
         else datetime.fromisoformat(end_date.replace("Z", "+00:00"))
     )
 
-    ranges = []
-    current = start
+    # Get alignment anchor date
+    if alignment_date is None:
+        alignment_date = get_alignment_date()
+    anchor = datetime.fromisoformat(alignment_date).replace(tzinfo=start.tzinfo)
 
+    ranges = []
+
+    # If start is before anchor, we need to generate ranges that align with anchor
+    if start < anchor:
+        # Calculate how many days from start to get to an aligned boundary
+        days_to_anchor = (anchor - start).days
+
+        # If the gap to anchor is smaller than chunk size, make one small chunk
+        if days_to_anchor < days:
+            # Create a small initial chunk to align with anchor
+            ranges.append((start.strftime("%Y-%m-%d"), anchor.strftime("%Y-%m-%d")))
+            current = anchor
+        else:
+            # Calculate aligned start that's <= start but aligns with anchor boundaries
+            # Find how many complete chunks fit between start and anchor
+            complete_chunks = days_to_anchor // days
+            # Start from anchor - (complete_chunks * days) to align boundaries
+            aligned_start = anchor - timedelta(days=complete_chunks * days)
+
+            # If aligned_start is before our actual start, move forward by one chunk
+            if aligned_start < start:
+                aligned_start += timedelta(days=days)
+
+            # Add small initial chunk if needed to reach aligned boundary
+            if start < aligned_start:
+                ranges.append(
+                    (start.strftime("%Y-%m-%d"), aligned_start.strftime("%Y-%m-%d"))
+                )
+                current = aligned_start
+            else:
+                current = start
+    else:
+        # Start is after anchor, calculate aligned boundaries from anchor
+        days_from_anchor = (start - anchor).days
+        chunks_from_anchor = days_from_anchor // days
+        aligned_start = anchor + timedelta(days=chunks_from_anchor * days)
+
+        # If we need to move forward to next boundary
+        if aligned_start < start:
+            aligned_start += timedelta(days=days)
+
+        # Add small initial chunk if needed to reach aligned boundary
+        if start < aligned_start:
+            ranges.append(
+                (start.strftime("%Y-%m-%d"), aligned_start.strftime("%Y-%m-%d"))
+            )
+            current = aligned_start
+        else:
+            current = start
+
+    # Generate remaining chunks with standard chunk size (these will be aligned)
     while current < end:
         next_chunk = min(current + timedelta(days=days), end)
         start_str = current.strftime("%Y-%m-%d")
@@ -290,6 +346,7 @@ def fetch_issues(
     chunk_days: int = 7,
     include_cross_references: bool = True,
     refetch: bool = False,
+    alignment_date: str | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch issues from GitHub using REST API with date range chunking."""
 
@@ -305,7 +362,9 @@ def fetch_issues(
         print(f"⚠️  Could not load existing issues: {e}")
         existing_issues = []
 
-    date_ranges = generate_date_ranges_rest(start_date, days=chunk_days)
+    date_ranges = generate_date_ranges_rest(
+        start_date, days=chunk_days, alignment_date=alignment_date
+    )
     print(
         f"📊 Fetching issues in {len(date_ranges)} chunks of {chunk_days} days each (REST API)"
     )

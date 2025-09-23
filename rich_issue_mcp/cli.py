@@ -30,6 +30,7 @@ def cmd_pull(args) -> None:
         chunk_days=getattr(args, "chunk_days", 7),
         include_cross_references=getattr(args, "include_cross_references", True),
         refetch=getattr(args, "refetch", False),
+        alignment_date=getattr(args, "alignment_date", None),
     )
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
@@ -196,6 +197,10 @@ def main() -> None:
         type=int,
         default=7,
         help="Number of days per chunk for date range processing (default: 7)",
+    )
+    pull_parser.add_argument(
+        "--alignment-date",
+        help="Date alignment anchor for cache optimization (YYYY-MM-DD, default from config or 2024-01-01)",
     )
     pull_parser.set_defaults(func=cmd_pull)
 
