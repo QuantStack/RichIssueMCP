@@ -18,18 +18,30 @@ def _get_repo_name(repo: str | None = None) -> str:
 
 
 @mcp.tool()
-def get_issue(issue_number: int, repo: str | None = None) -> dict[str, Any] | None:
-    """Get specific issue summary and number."""
+def get_issue(
+    issue_number: int, repo: str | None = None, status: str | None = None
+) -> dict[str, Any] | None:
+    """Get specific issue summary and number. Optionally filter by status (open/closed)."""
     repo = _get_repo_name(repo)
     issues = load_issues(repo)
     issue = next((i for i in issues if i["number"] == issue_number), None)
     if not issue:
         return None
+
+    # Filter by status if specified
+    if status:
+        issue_state = issue.get("state", "").lower()
+        if status.lower() == "open" and issue_state != "open":
+            return None
+        elif status.lower() == "closed" and issue_state != "closed":
+            return None
+
     return {
         "number": issue["number"],
         "summary": issue.get("summary"),
         "conversation": issue.get("conversation"),
         "recommendations": issue.get("recommendations", []),
+        "state": issue.get("state"),
     }
 
 
@@ -39,8 +51,9 @@ def find_similar_issues(
     threshold: float = 0.8,
     limit: int = 10,
     repo: str | None = None,
+    status: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Find issues similar to target issue using embeddings."""
+    """Find issues similar to target issue using embeddings. Optionally filter by status (open/closed)."""
     repo = _get_repo_name(repo)
     issues = load_issues(repo)
     target = next((i for i in issues if i["number"] == issue_number), None)
@@ -63,6 +76,14 @@ def find_similar_issues(
         if issue["number"] == issue_number or not issue.get("embedding"):
             continue
 
+        # Filter by status if specified
+        if status:
+            issue_state = issue.get("state", "").lower()
+            if status.lower() == "open" and issue_state != "open":
+                continue
+            elif status.lower() == "closed" and issue_state != "closed":
+                continue
+
         similarity = cosine_similarity(target["embedding"], issue["embedding"])
         if similarity >= threshold:
             result = {
@@ -71,6 +92,7 @@ def find_similar_issues(
                 "summary": issue.get("summary"),
                 "url": issue.get("url"),
                 "similarity": similarity,
+                "state": issue.get("state"),
             }
             similar.append(result)
 
@@ -79,9 +101,9 @@ def find_similar_issues(
 
 @mcp.tool()
 def find_linked_issues(
-    issue_number: int, repo: str | None = None
+    issue_number: int, repo: str | None = None, status: str | None = None
 ) -> list[dict[str, Any]]:
-    """Find cross-referenced issues from the target issue."""
+    """Find cross-referenced issues from the target issue. Optionally filter by status (open/closed)."""
     repo = _get_repo_name(repo)
     issues = load_issues(repo)
     target = next((i for i in issues if i["number"] == issue_number), None)
@@ -89,20 +111,49 @@ def find_linked_issues(
     if not target:
         return []
 
-    return target.get("cross_references", [])
+    cross_refs = target.get("cross_references", [])
+
+    # Filter by status if specified
+    if status:
+        # Create lookup for issue states
+        issue_states = {
+            issue["number"]: issue.get("state", "").lower() for issue in issues
+        }
+
+        filtered_refs = []
+        for ref in cross_refs:
+            ref_number = ref.get("number")
+            if ref_number and ref_number in issue_states:
+                ref_state = issue_states[ref_number]
+                if status.lower() == "open" and ref_state == "open":
+                    filtered_refs.append(ref)
+                elif status.lower() == "closed" and ref_state == "closed":
+                    filtered_refs.append(ref)
+
+        return filtered_refs
+
+    return cross_refs
 
 
 @mcp.tool()
 def get_issue_metrics(
-    issue_number: int, repo: str | None = None
+    issue_number: int, repo: str | None = None, status: str | None = None
 ) -> dict[str, Any] | None:
-    """Get enrichment metrics for a specific issue."""
+    """Get enrichment metrics for a specific issue. Optionally filter by status (open/closed)."""
     repo = _get_repo_name(repo)
     issues = load_issues(repo)
     issue = next((i for i in issues if i["number"] == issue_number), None)
 
     if not issue:
         return None
+
+    # Filter by status if specified
+    if status:
+        issue_state = issue.get("state", "").lower()
+        if status.lower() == "open" and issue_state != "open":
+            return None
+        elif status.lower() == "closed" and issue_state != "closed":
+            return None
 
     return {
         "priority_score": issue.get("priority_score", 0),
@@ -114,6 +165,7 @@ def get_issue_metrics(
         "negative_reactions": issue.get("negative_reactions", 0),
         "age_days": issue.get("age_days", 0),
         "has_embedding": issue.get("embedding") is not None,
+        "state": issue.get("state"),
     }
 
 
@@ -352,8 +404,9 @@ def add_recommendation(
 @mcp.tool()
 def get_first_issue_without_recommendation(
     repo: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any] | None:
-    """Get the first issue without any recommendations."""
+    """Get the first issue without any recommendations. Optionally filter by status (open/closed)."""
     repo = _get_repo_name(repo)
     issues = load_issues(repo)
 
@@ -362,6 +415,14 @@ def get_first_issue_without_recommendation(
 
     # Find first issue without recommendations
     for issue in issues:
+        # Filter by status if specified
+        if status:
+            issue_state = issue.get("state", "").lower()
+            if status.lower() == "open" and issue_state != "open":
+                continue
+            elif status.lower() == "closed" and issue_state != "closed":
+                continue
+
         recommendations = issue.get("recommendations", [])
         if not recommendations or len(recommendations) == 0:
             return {
