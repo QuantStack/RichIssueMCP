@@ -79,34 +79,10 @@ def cmd_mcp(args) -> None:
 
 def cmd_visualize(args) -> None:
     """Execute visualize command."""
-    if args.input_file:
-        input_path = Path(args.input_file)
-    else:
-        # Find the latest enriched or agent issues file
-        data_dir = get_data_directory()
-        enriched_files = list(data_dir.glob("enriched-issues-*.json.gz"))
-        agent_files = list(data_dir.glob("agent-issues-*.json.gz"))
-
-        all_files = enriched_files + agent_files
-        if not all_files:
-            raise FileNotFoundError(
-                "No enriched or agent issues files found. Run 'enrich' command first."
-            )
-
-        input_path = max(all_files, key=lambda p: p.stat().st_mtime)
-        print(f"📁 Using latest file: {input_path}")
-
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
-
-    # Determine output directory
-    if args.output:
-        output_dir = Path(args.output)
-    else:
-        basename = input_path.stem.replace(".json", "")
-        output_dir = get_data_directory() / f"visualization-{basename}"
-
-    visualize_issues(input_path, output_dir, scale=args.scale)
+    repo = args.repo or "jupyterlab/jupyterlab"
+    print(f"📊 Visualizing repository: {repo}")
+    
+    visualize_issues(repo, args.output, scale=args.scale)
 
 
 def cmd_clean(args) -> None:
@@ -231,14 +207,16 @@ def main() -> None:
     # Visualize command
     visualize_parser = subparsers.add_parser(
         "visualize",
-        help="Create T-SNE visualization and GraphML network from enriched issues",
+        help="Create T-SNE visualization and GraphML network from enriched issues in TinyDB",
     )
     visualize_parser.add_argument(
-        "input_file",
-        nargs="?",
-        help="Path to enriched or agent issues JSON.gz file (defaults to latest enriched/agent file)",
+        "--repo", 
+        help="Repository name (e.g., 'owner/repo') to load from TinyDB (default: jupyterlab/jupyterlab)"
     )
-    visualize_parser.add_argument("--output", help="Output directory path")
+    visualize_parser.add_argument(
+        "--output", 
+        help="Output file path (.graphml) or directory (default: owner_repo_issues.graphml in current directory)"
+    )
     visualize_parser.add_argument(
         "--scale",
         type=float,
