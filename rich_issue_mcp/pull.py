@@ -162,71 +162,266 @@ def make_rest_request(
     return response
 
 
-def fetch_issues_page(
+def make_graphql_request(query: str, variables: dict[str, Any] | None = None, max_retries: int = 5) -> requests.Response:
+    """Make a GraphQL API request to GitHub with rate limit handling."""
+    token = get_github_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "User-Agent": "RichIssueMCP/1.0",
+    }
+    
+    payload = {"query": query}
+    if variables:
+        payload["variables"] = variables
+
+    for attempt in range(max_retries):
+        response = requests.post("https://api.github.com/graphql", headers=headers, json=payload)
+
+        # If successful, return immediately
+        if response.status_code == 200:
+            return response
+
+        # Handle rate limit errors
+        if response.status_code == 403:
+            try:
+                error_data = response.json()
+                if "rate limit" in error_data.get("message", "").lower():
+                    # Check if we have rate limit reset info in headers
+                    rate_limit_reset = response.headers.get("X-RateLimit-Reset")
+                    remaining = response.headers.get("X-RateLimit-Remaining", "0")
+
+                    if rate_limit_reset:
+                        reset_time = int(rate_limit_reset)
+                        current_time = int(time.time())
+                        time_until_reset = reset_time - current_time + 10  # Add 10 second buffer
+
+                        # Wait until rate limit resets
+                        wait_time = max(time_until_reset, 60)  # Minimum 60 seconds
+
+                        reset_datetime = datetime.fromtimestamp(reset_time)
+                        print(
+                            f"⚠️  GraphQL Rate limit exceeded (remaining: {remaining}). "
+                            f"Waiting {wait_time} seconds until reset at {reset_datetime.strftime('%H:%M:%S')}..."
+                        )
+                    else:
+                        # Fallback: exponential backoff
+                        wait_time = 60 * (2**attempt)
+                        print(
+                            f"⚠️  GraphQL Rate limit hit (attempt {attempt + 1}/{max_retries}). "
+                            f"Waiting {wait_time} seconds..."
+                        )
+
+                    time.sleep(wait_time)
+                    continue
+            except (ValueError, KeyError):
+                # Not a JSON response or missing fields, treat as non-rate-limit 403
+                pass
+
+        # For non-rate-limit errors or final attempt, return the response
+        if attempt == max_retries - 1 or response.status_code != 403:
+            return response
+
+        # For other 403 errors, wait a short time before retry
+        print(
+            f"⚠️  GraphQL Request failed with 403 (attempt {attempt + 1}/{max_retries}). Waiting 30 seconds..."
+        )
+        time.sleep(30)
+
+    return response
+
+
+def fetch_issues_page_graphql(
     repo: str,
-    page: int,
+    cursor: str | None = None,
     include_closed: bool = True,
     since: str | None = None,
     mode: str = "update",
-) -> list[dict[str, Any]]:
-    """Fetch a single page of issues using Issues API.
+    item_type: str = "issues",
+) -> tuple[list[dict[str, Any]], str | None, bool]:
+    """Fetch a single page of issues or PRs using GraphQL API with cursor-based pagination.
 
     Args:
         repo: GitHub repository in owner/repo format
-        page: Page number to fetch
-        include_closed: Whether to include closed issues
-        since: ISO timestamp to fetch issues since
+        cursor: Cursor for pagination (after this cursor)
+        include_closed: Whether to include closed items
+        since: ISO timestamp to fetch items since
         mode: Either 'create' (sort by created) or 'update' (sort by updated)
+        item_type: Either 'issues' or 'pull_requests'
+
+    Returns:
+        Tuple of (items_list, next_cursor, has_next_page)
     """
-    issues_url = f"https://api.github.com/repos/{repo}/issues"
-
+    owner, name = repo.split("/")
+    
     # Set sort parameters based on mode
-    sort_field = "created" if mode == "create" else "updated"
-
-    params = {
-        "sort": sort_field,
-        "direction": "asc",
-        "per_page": 100,
-        "page": page,
-        "state": "all" if include_closed else "open",
+    order_by = "CREATED_AT" if mode == "create" else "UPDATED_AT"
+    
+    # Build states filter
+    states = ["OPEN", "CLOSED"] if include_closed else ["OPEN"]
+    states_filter = ", ".join(states)
+    
+    # Build GraphQL query based on item type (create mode - sort by CREATED_AT)
+    if item_type == "issues":
+        query = f"""
+        query($owner: String!, $name: String!, $cursor: String) {{
+            repository(owner: $owner, name: $name) {{
+                issues(first: 100, after: $cursor, orderBy: {{field: CREATED_AT, direction: ASC}}, states: [{states_filter}]) {{
+                    pageInfo {{
+                        hasNextPage
+                        endCursor
+                    }}
+                    nodes {{
+                        number
+                        title
+                        body
+                        state
+                        createdAt
+                        updatedAt
+                        url
+                        author {{
+                            login
+                        }}
+                        labels(first: 50) {{
+                            nodes {{
+                                name
+                                color
+                            }}
+                        }}
+                        assignees(first: 10) {{
+                            nodes {{
+                                login
+                            }}
+                        }}
+                    }}
+                }}
+            }}
+            rateLimit {{
+                remaining
+                resetAt
+            }}
+        }}
+        """
+    else:  # pull_requests
+        query = f"""
+        query($owner: String!, $name: String!, $cursor: String) {{
+            repository(owner: $owner, name: $name) {{
+                pullRequests(first: 100, after: $cursor, orderBy: {{field: CREATED_AT, direction: ASC}}, states: [{states_filter}]) {{
+                    pageInfo {{
+                        hasNextPage
+                        endCursor
+                    }}
+                    nodes {{
+                        number
+                        title
+                        body
+                        state
+                        createdAt
+                        updatedAt
+                        url
+                        author {{
+                            login
+                        }}
+                        labels(first: 50) {{
+                            nodes {{
+                                name
+                                color
+                            }}
+                        }}
+                        assignees(first: 10) {{
+                            nodes {{
+                                login
+                            }}
+                        }}
+                        mergeable
+                        merged
+                        mergedAt
+                        baseRefName
+                        headRefName
+                    }}
+                }}
+            }}
+            rateLimit {{
+                remaining
+                resetAt
+            }}
+        }}
+        """
+    
+    variables = {
+        "owner": owner,
+        "name": name,
+        "cursor": cursor
     }
-
-    if since:
-        params["since"] = since
-
-    response = make_rest_request(issues_url, params)
-
+    
+    response = make_graphql_request(query, variables)
+    
     if response.status_code != 200:
-        raise Exception(f"Issues API failed: {response.status_code} - {response.text}")
-
-    issues = response.json()
-
-    # Get rate limit info
-    remaining = response.headers.get("X-RateLimit-Remaining", "unknown")
-    reset_timestamp = response.headers.get("X-RateLimit-Reset")
-
-    # Get pagination info from Link header if available
-    link_header = response.headers.get("Link", "")
-    total_pages = "unknown"
-    if 'rel="last"' in link_header:
-        # Extract last page number from Link header
-        import re
-
-        last_match = re.search(r'page=(\d+)[^>]*>;\s*rel="last"', link_header)
-        if last_match:
-            total_pages = last_match.group(1)
-
-    if reset_timestamp:
-        reset_time = datetime.fromtimestamp(int(reset_timestamp))
-        print(
-            f"📄 Fetched page {page}/{total_pages}: {len(issues)} issues, Rate limit: {remaining} remaining (resets at {reset_time.strftime('%H:%M:%S')})"
-        )
-    else:
-        print(
-            f"📄 Fetched page {page}/{total_pages}: {len(issues)} issues, Rate limit: {remaining} remaining"
-        )
-
-    return issues
+        raise Exception(f"GraphQL API failed: {response.status_code} - {response.text}")
+    
+    data = response.json()
+    
+    if "errors" in data:
+        raise Exception(f"GraphQL errors: {data['errors']}")
+    
+    repository = data["data"]["repository"]
+    rate_limit = data["data"]["rateLimit"]
+    
+    # Get the appropriate data based on item type
+    if item_type == "issues":
+        items_data = repository["issues"]
+        type_name = "issue"
+    else:  # pull_requests
+        items_data = repository["pullRequests"]
+        type_name = "pull_request"
+    
+    # Convert GraphQL format to REST API format for compatibility
+    items = []
+    for node in items_data["nodes"]:
+        item = {
+            "number": node["number"],
+            "title": node["title"],
+            "body": node["body"],
+            "state": node["state"].lower(),
+            "created_at": node["createdAt"],
+            "updated_at": node["updatedAt"],
+            "html_url": node["url"],
+            "user": {"login": node["author"]["login"] if node["author"] else "ghost"},
+            "labels": [{"name": label["name"], "color": label["color"]} for label in node["labels"]["nodes"]],
+            "assignees": [{"login": assignee["login"]} for assignee in node["assignees"]["nodes"]],
+            "item_type": type_name,
+        }
+        
+        # Add PR-specific fields
+        if item_type == "pull_requests":
+            item.update({
+                "mergeable": node.get("mergeable"),
+                "merged": node.get("merged", False),
+                "merged_at": node.get("mergedAt"),
+                "base_ref": node.get("baseRefName"),
+                "head_ref": node.get("headRefName"),
+            })
+        
+        items.append(item)
+    
+    page_info = items_data["pageInfo"]
+    next_cursor = page_info["endCursor"] if page_info["hasNextPage"] else None
+    has_next_page = page_info["hasNextPage"]
+    
+    # Print rate limit info
+    remaining = rate_limit["remaining"]
+    reset_at = rate_limit["resetAt"]
+    reset_time = datetime.fromisoformat(reset_at.replace('Z', '+00:00'))
+    
+    cursor_info = f"cursor={cursor[:10]}..." if cursor else "first page"
+    item_name = "issues" if item_type == "issues" else "PRs"
+    print(
+        f"📄 GraphQL fetched {cursor_info}: {len(items)} {item_name}, "
+        f"Rate limit: {remaining} remaining (resets at {reset_time.strftime('%H:%M:%S')}), "
+        f"Has next: {has_next_page}"
+    )
+    
+    return items, next_cursor, has_next_page
 
 
 def filter_new_issues_for_create_mode(
@@ -489,6 +684,91 @@ def fetch_specific_issues(repo: str, issue_numbers: list[int]) -> list[dict[str,
     return processed_issues
 
 
+def fetch_items_with_pagination(
+    repo: str,
+    item_type: str,
+    include_closed: bool,
+    existing_numbers: set[int],
+    coverage: tuple[datetime, datetime] | None,
+    mode: str,
+) -> tuple[int, int, int]:
+    """Fetch all items (issues or PRs) with pagination.
+    
+    Returns:
+        Tuple of (processed_count, comments_count, cross_refs_count)
+    """
+    cursor = None
+    page_num = 1
+    total_processed = 0
+    total_comments = 0
+    total_cross_refs = 0
+    
+    while True:
+        print(f"\n🔍 Fetching {item_type} page {page_num}...")
+        page_items, next_cursor, has_next_page = fetch_issues_page_graphql(
+            repo, cursor, include_closed, None, mode, item_type
+        )
+
+        if not page_items:
+            print(f"✅ No more {item_type} found - fetch complete")
+            break
+
+        # Filter out existing items in create mode
+        if mode == "create" and existing_numbers:
+            original_count = len(page_items)
+            page_items = filter_new_issues_for_create_mode(
+                page_items, existing_numbers
+            )
+            filtered_count = original_count - len(page_items)
+            if filtered_count > 0:
+                print(
+                    f"  ⏭️  Filtered out {filtered_count} existing {item_type} ({len(page_items)} new)"
+                )
+
+        if not page_items:
+            print(f"  ⏭️  All {item_type} in page already exist - skipping")
+            cursor = next_cursor
+            page_num += 1
+            continue
+
+        # Check if this page needs processing (for update mode with coverage)
+        needs_processing = True
+        if mode == "update":
+            needs_processing = page_needs_processing(page_items, coverage, mode)
+
+        if needs_processing:
+            print(f"🔧 Processing {item_type} page {page_num} ({len(page_items)} items)...")
+            processed_items = process_page_issues(repo, page_items)
+
+            # Count stats
+            page_comments = sum(len(item["comments"]) for item in processed_items)
+            page_cross_refs = sum(
+                len(item["cross_references"]) for item in processed_items
+            )
+
+            total_processed += len(processed_items)
+            total_comments += page_comments
+            total_cross_refs += page_cross_refs
+
+            print(
+                f"  📊 Page stats: {page_comments} comments, {page_cross_refs} cross-refs"
+            )
+
+        else:
+            print(f"⏭️  Skipping {item_type} page {page_num} - all items already in database")
+
+        # Move to next page
+        cursor = next_cursor
+        page_num += 1
+
+        # Stop if no more pages
+        if not has_next_page:
+            print(f"✅ No more {item_type} pages - fetch complete")
+            break
+
+    return total_processed, total_comments, total_cross_refs
+
+
 def fetch_issues(
     repo: str,
     include_closed: bool = True,
@@ -599,82 +879,39 @@ def fetch_issues(
         earliest, latest = coverage
         print(f"📊 Existing database coverage: {earliest.date()} to {latest.date()}")
 
-    page = 1
+    # Initialize counters
     total_processed = 0
-    total_skipped = 0
-    total_comments = 0
+    total_comments = 0 
     total_cross_refs = 0
+    
+    # First fetch all issues
+    print(f"\n🔍 Fetching issues...")
+    issues_processed = fetch_items_with_pagination(
+        repo, "issues", include_closed, existing_numbers, coverage, mode
+    )
+    total_processed += issues_processed[0]
+    total_comments += issues_processed[1] 
+    total_cross_refs += issues_processed[2]
+    
+    # Then fetch all PRs
+    print(f"\n🔍 Fetching pull requests...")
+    prs_processed = fetch_items_with_pagination(
+        repo, "pull_requests", include_closed, existing_numbers, coverage, mode
+    )
+    total_processed += prs_processed[0]
+    total_comments += prs_processed[1]
+    total_cross_refs += prs_processed[2]
 
-    while True:
-        # Fetch page of issues
-        print(f"\n🔍 Fetching page {page}...")
-        page_issues = fetch_issues_page(repo, page, include_closed, since_param, mode)
-
-        if not page_issues:
-            print("✅ No more issues found - fetch complete")
-            break
-
-        # Filter out existing issues in create mode
-        if mode == "create" and existing_numbers:
-            original_count = len(page_issues)
-            page_issues = filter_new_issues_for_create_mode(
-                page_issues, existing_numbers
-            )
-            filtered_count = original_count - len(page_issues)
-            if filtered_count > 0:
-                print(
-                    f"  ⏭️  Filtered out {filtered_count} existing issues ({len(page_issues)} new)"
-                )
-
-        if not page_issues:
-            print("  ⏭️  All issues in page already exist - skipping")
-            page += 1
-            continue
-
-        # Check if this page needs processing (for update mode with coverage)
-        needs_processing = True
-        if mode == "update":
-            needs_processing = page_needs_processing(page_issues, coverage, mode)
-
-        if needs_processing:
-            print(f"🔧 Processing page {page} ({len(page_issues)} issues)...")
-            processed_issues = process_page_issues(repo, page_issues)
-
-            # Count stats
-            page_comments = sum(len(issue["comments"]) for issue in processed_issues)
-            page_cross_refs = sum(
-                len(issue["cross_references"]) for issue in processed_issues
-            )
-
-            total_processed += len(processed_issues)
-            total_comments += page_comments
-            total_cross_refs += page_cross_refs
-
-            print(
-                f"  📊 Page stats: {page_comments} comments, {page_cross_refs} cross-refs"
-            )
-
-        else:
-            print(f"⏭️  Skipping page {page} - all issues already in database")
-            total_skipped += len(page_issues)
-
-        page += 1
-
-        # Apply limit if specified (for testing)
-        if limit and total_processed >= limit:
-            print(f"🛑 Reached limit of {limit} processed issues")
-            break
 
     # Load final results
     try:
         final_issues = load_issues(repo)
         print("\n📋 Final results:")
-        print(f"  📁 Total issues in database: {len(final_issues)}")
+        print(f"  📁 Total items in database: {len(final_issues)}")
         print(f"  ✅ Processed this run: {total_processed}")
-        print(f"  ⏭️  Skipped this run: {total_skipped}")
         print(f"  💬 Comments fetched: {total_comments}")
         print(f"  🔗 Cross-references fetched: {total_cross_refs}")
-        print("  💾 Each issue saved to database immediately after processing")
+        print("  💾 Each item saved to database immediately after processing")
 
         return final_issues
     except Exception as e:
