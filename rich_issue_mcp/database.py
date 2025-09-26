@@ -30,7 +30,7 @@ def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
 
     # Clear existing data first
     db.truncate()
-    
+
     # Insert all new issues in a transaction
     with transaction(db) as tr:
         tr.insert_multiple(issues)
@@ -50,4 +50,11 @@ def upsert_issues(repo: str, issues: list[dict[str, Any]]) -> None:
     with transaction(db) as tr:
         for issue in issues:
             issue_number = issue["number"]
-            tr.upsert(issue, Issue.number == issue_number)
+            # Check if issue exists
+            existing = db.search(Issue.number == issue_number)
+            if existing:
+                # Update existing issue
+                tr.update(issue, Issue.number == issue_number)
+            else:
+                # Insert new issue
+                tr.insert(issue)

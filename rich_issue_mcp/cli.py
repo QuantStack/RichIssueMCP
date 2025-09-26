@@ -2,7 +2,6 @@
 """Main CLI entry point for Rich Issue MCP."""
 
 import argparse
-from pathlib import Path
 
 from rich_issue_mcp.config import get_config, get_data_directory
 from rich_issue_mcp.database import load_issues, save_issues
@@ -27,10 +26,9 @@ def cmd_pull(args) -> None:
         include_closed=not args.exclude_closed,  # Invert the flag
         limit=args.limit,
         start_date=getattr(args, "start_date", "2025-01-01"),
-        chunk_days=getattr(args, "chunk_days", 7),
-        include_cross_references=getattr(args, "include_cross_references", True),
         refetch=getattr(args, "refetch", False),
-        alignment_date=getattr(args, "alignment_date", None),
+        mode=getattr(args, "mode", "update"),
+        issue_numbers=getattr(args, "issue_numbers", None),
     )
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
@@ -81,7 +79,7 @@ def cmd_visualize(args) -> None:
     """Execute visualize command."""
     repo = args.repo or "jupyterlab/jupyterlab"
     print(f"📊 Visualizing repository: {repo}")
-    
+
     visualize_issues(repo, args.output, scale=args.scale)
 
 
@@ -163,20 +161,19 @@ def main() -> None:
         "--refetch", action="store_true", help="Refetch all issues from start date"
     )
     pull_parser.add_argument(
-        "--no-cross-references",
-        dest="include_cross_references",
-        action="store_false",
-        help="Skip fetching cross-reference data from timeline API",
+        "--mode",
+        choices=["create", "update"],
+        default="update",
+        help=(
+            "Pull mode: 'create' sorts by created date and avoids re-pulling existing issues, "
+            "'update' pulls from last updated date in database (default: update)"
+        ),
     )
     pull_parser.add_argument(
-        "--chunk-days",
+        "--issue-numbers",
+        nargs="+",
         type=int,
-        default=7,
-        help="Number of days per chunk for date range processing (default: 7)",
-    )
-    pull_parser.add_argument(
-        "--alignment-date",
-        help="Date alignment anchor for cache optimization (YYYY-MM-DD, default from config or 2024-01-01)",
+        help="Specific issue numbers to refetch (always refetches even if they exist)",
     )
     pull_parser.set_defaults(func=cmd_pull)
 
@@ -210,12 +207,12 @@ def main() -> None:
         help="Create T-SNE visualization and GraphML network from enriched issues in TinyDB",
     )
     visualize_parser.add_argument(
-        "--repo", 
-        help="Repository name (e.g., 'owner/repo') to load from TinyDB (default: jupyterlab/jupyterlab)"
+        "--repo",
+        help="Repository name (e.g., 'owner/repo') to load from TinyDB (default: jupyterlab/jupyterlab)",
     )
     visualize_parser.add_argument(
-        "--output", 
-        help="Output file path (.graphml) or directory (default: owner_repo_issues.graphml in current directory)"
+        "--output",
+        help="Output file path (.graphml) or directory (default: owner_repo_issues.graphml in current directory)",
     )
     visualize_parser.add_argument(
         "--scale",

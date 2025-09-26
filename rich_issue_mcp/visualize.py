@@ -191,7 +191,7 @@ def write_graphml(
             for key, value in reactions.items():
                 if key != "total_count" and isinstance(value, int):
                     emoji_count += value
-        
+
         # Count emojis from comments (if available)
         comments = issue.get("comments_data", [])
         if isinstance(comments, list):
@@ -211,7 +211,7 @@ def write_graphml(
         num_comments = issue.get("number_of_comments", 0)
         num_linked = len(cross_references.get(issue_id, set()))
         total_engagements = num_comments + emoji_count + num_linked
-        
+
         total_engagements_data = ET.SubElement(node, "data")
         total_engagements_data.set("key", "d11")
         total_engagements_data.text = str(total_engagements)
@@ -256,16 +256,18 @@ def write_graphml(
     tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
 
-def visualize_issues(repo: str, output_path: Path | str | None = None, scale: float = 1.0) -> None:
+def visualize_issues(
+    repo: str, output_path: Path | str | None = None, scale: float = 1.0
+) -> None:
     """Create T-SNE visualization and GraphML network from enriched issues.
-    
+
     Args:
         repo: Repository name (e.g. 'owner/repo') to load from TinyDB
         output_path: Output GraphML file path, or directory path, or None for default naming
         scale: Scale factor for embedding coordinates
     """
     print(f"🔍 Loading enriched issues from repository {repo}...")
-        
+
     issues = load_enriched_issues(repo)
 
     print(f"📊 Extracting embeddings from {len(issues)} issues...")
@@ -286,18 +288,18 @@ def visualize_issues(repo: str, output_path: Path | str | None = None, scale: fl
     # Determine output path
     if output_path is None:
         # Default naming: owner_repo_issues.graphml
-        default_name = repo.replace('/', '_') + '_issues.graphml'
+        default_name = repo.replace("/", "_") + "_issues.graphml"
         graphml_path = Path.cwd() / default_name
     else:
         output_path = Path(output_path)
         if output_path.is_dir():
             # It's a directory, use default filename in that directory
-            default_name = repo.replace('/', '_') + '_issues.graphml'
+            default_name = repo.replace("/", "_") + "_issues.graphml"
             graphml_path = output_path / default_name
         else:
             # It's a file path
             graphml_path = output_path
-            
+
     # Create output directory if needed
     graphml_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -314,7 +316,7 @@ def visualize_issues(repo: str, output_path: Path | str | None = None, scale: fl
     )
 
     # Write T-SNE coordinates as JSON in same directory
-    tsne_path = graphml_path.parent / (graphml_path.stem + '_tsne_coordinates.json')
+    tsne_path = graphml_path.parent / (graphml_path.stem + "_tsne_coordinates.json")
     print(f"💾 Writing T-SNE coordinates to {tsne_path}...")
 
     tsne_data = {
