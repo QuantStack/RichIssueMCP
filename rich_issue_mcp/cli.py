@@ -14,6 +14,7 @@ from rich_issue_mcp.enrich import (
 )
 from rich_issue_mcp.mcp_server import run_mcp_server
 from rich_issue_mcp.pull import fetch_issues
+from rich_issue_mcp.validate import validate_database
 from rich_issue_mcp.visualize import visualize_issues
 
 
@@ -29,6 +30,7 @@ def cmd_pull(args) -> None:
         refetch=getattr(args, "refetch", False),
         mode=getattr(args, "mode", "update"),
         issue_numbers=getattr(args, "issue_numbers", None),
+        item_types=getattr(args, "item_types", "both"),
     )
     print(f"📥 Retrieved {len(raw_issues)} issues")
 
@@ -134,6 +136,14 @@ def cmd_clean(args) -> None:
     print(f"✅ Cleaned {deleted_count} files from {data_dir}")
 
 
+def cmd_validate(args) -> None:
+    """Execute validate command to check database integrity."""
+    repo = args.repo or "jupyterlab/jupyterlab"
+    success = validate_database(repo, delete_invalid=getattr(args, 'delete_invalid', False))
+    if not success:
+        exit(1)
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -174,6 +184,12 @@ def main() -> None:
         nargs="+",
         type=int,
         help="Specific issue numbers to refetch (always refetches even if they exist)",
+    )
+    pull_parser.add_argument(
+        "--item-types",
+        choices=["issues", "prs", "both"],
+        default="both",
+        help="What to fetch: 'issues' only, 'prs' only, or 'both' (default: both)",
     )
     pull_parser.set_defaults(func=cmd_pull)
 
@@ -228,6 +244,19 @@ def main() -> None:
         "--yes", "-y", action="store_true", help="Skip confirmation prompt"
     )
     clean_parser.set_defaults(func=cmd_clean)
+
+    # Validate command
+    validate_parser = subparsers.add_parser(
+        "validate", help="Validate database integrity and completeness"
+    )
+    validate_parser.add_argument(
+        "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to validate"
+    )
+    validate_parser.add_argument(
+        "--delete-invalid", action="store_true", 
+        help="Delete invalid entries from database after confirmation"
+    )
+    validate_parser.set_defaults(func=cmd_validate)
 
     args = parser.parse_args()
 

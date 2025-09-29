@@ -257,8 +257,11 @@ def fetch_issues_page_graphql(
     # Set sort parameters based on mode
     order_by = "CREATED_AT" if mode == "create" else "UPDATED_AT"
     
-    # Build states filter
-    states = ["OPEN", "CLOSED"] if include_closed else ["OPEN"]
+    # Build states filter - for PRs, include MERGED state as well
+    if item_type == "pull_requests":
+        states = ["OPEN", "CLOSED", "MERGED"] if include_closed else ["OPEN"]
+    else:
+        states = ["OPEN", "CLOSED"] if include_closed else ["OPEN"]
     states_filter = ", ".join(states)
     
     # Build GraphQL query based on item type (create mode - sort by CREATED_AT)
@@ -420,6 +423,22 @@ def fetch_issues_page_graphql(
         f"Rate limit: {remaining} remaining (resets at {reset_time.strftime('%H:%M:%S')}), "
         f"Has next: {has_next_page}"
     )
+    
+    # Debug: show first and last issue numbers on this page
+    if items:
+        first_num = items[0]["number"]
+        last_num = items[-1]["number"]
+        print(f"  🔢 Issue range on this page: #{first_num} to #{last_num}")
+        
+        # Look for missing PR 2525
+        if first_num <= 2525 <= last_num:
+            print(f"  🎯 This page should contain PR #2525!")
+            has_2525 = any(item["number"] == 2525 for item in items)
+            print(f"  🎯 PR #2525 actually present: {has_2525}")
+            if has_2525:
+                print(f"  ✅ Found PR #2525! Fix successful.")
+    else:
+        print(f"  🔢 No items returned from GraphQL")
     
     return items, next_cursor, has_next_page
 
@@ -716,6 +735,15 @@ def fetch_items_with_pagination(
         # Filter out existing items in create mode
         if mode == "create" and existing_numbers:
             original_count = len(page_items)
+            
+            # Debug: Check first few items in this page
+            if page_items:
+                sample_numbers = [item["number"] for item in page_items[:5]]
+                sample_in_db = [num for num in sample_numbers if num in existing_numbers]
+                print(f"  🐛 Debug: Page has {original_count} items, sample numbers: {sample_numbers}")
+                print(f"  🐛 Debug: Sample numbers in existing_numbers: {sample_in_db}")
+                print(f"  🐛 Debug: existing_numbers size: {len(existing_numbers)}")
+            
             page_items = filter_new_issues_for_create_mode(
                 page_items, existing_numbers
             )
@@ -727,6 +755,10 @@ def fetch_items_with_pagination(
 
         if not page_items:
             print(f"  ⏭️  All {item_type} in page already exist - skipping")
+            # Stop if no more pages (check before updating cursor)
+            if not has_next_page:
+                print(f"✅ No more {item_type} pages - fetch complete")
+                break
             cursor = next_cursor
             page_num += 1
             continue
@@ -757,14 +789,14 @@ def fetch_items_with_pagination(
         else:
             print(f"⏭️  Skipping {item_type} page {page_num} - all items already in database")
 
-        # Move to next page
-        cursor = next_cursor
-        page_num += 1
-
         # Stop if no more pages
         if not has_next_page:
             print(f"✅ No more {item_type} pages - fetch complete")
             break
+
+        # Move to next page (always update cursor regardless of processing)
+        cursor = next_cursor
+        page_num += 1
 
     return total_processed, total_comments, total_cross_refs
 
@@ -777,6 +809,7 @@ def fetch_issues(
     refetch: bool = False,
     mode: str = "update",
     issue_numbers: list[int] | None = None,
+    item_types: str = "both",
     **kwargs: Any,  # Backward compatibility for unused params
 ) -> list[dict[str, Any]]:
     """Fetch issues from GitHub using Issues API with intelligent page-based processing.
@@ -791,6 +824,7 @@ def fetch_issues(
             - 'create': Sort by created date, use start_date as since, avoid re-pulling existing issues
             - 'update': Pull from last updated date in database
         issue_numbers: Specific issue numbers to refetch (always refetches even if they exist)
+        item_types: What to fetch - 'issues', 'prs', or 'both' (default)
     """
 
     # Handle specific issue numbers if provided
@@ -827,13 +861,9 @@ def fetch_issues(
     # Analyze existing database coverage
     coverage = None if refetch else get_database_coverage(repo, mode)
 
-    # Determine the 'since' parameter for GitHub API based on mode
-    since_param = None
-
     if mode == "create":
         # CREATE MODE: Use start_date as since, avoid re-pulling existing issues
         if start_datetime:
-            since_param = start_datetime.isoformat()
             print(f"📅 CREATE mode: Using start_date as since: {start_datetime.date()}")
             if existing_numbers:
                 print(f"📊 Will skip {len(existing_numbers)} existing issues")
@@ -843,7 +873,6 @@ def fetch_issues(
                 print(
                     f"📊 Existing database covers: {earliest.date()} to {latest.date()}"
                 )
-                since_param = earliest.isoformat()
                 print(
                     f"📅 CREATE mode: Using earliest created date as since: {earliest.date()}"
                 )
@@ -853,7 +882,6 @@ def fetch_issues(
         # UPDATE MODE: Pull from last updated date in database
         if refetch and start_datetime:
             # If refetch with start_date, use start_date
-            since_param = start_datetime.isoformat()
             print(
                 f"📅 UPDATE mode (refetch): Using start_date as since: {start_datetime.date()}"
             )
@@ -861,12 +889,10 @@ def fetch_issues(
             # Use last updated date from database
             last_updated = get_last_updated_date(repo)
             if last_updated:
-                since_param = last_updated.isoformat()
                 print(
                     f"📅 UPDATE mode: Using last updated date as since: {last_updated.date()}"
                 )
             elif start_datetime:
-                since_param = start_datetime.isoformat()
                 print(
                     f"📅 UPDATE mode: No existing database, using start_date as since: {start_datetime.date()}"
                 )
@@ -884,23 +910,29 @@ def fetch_issues(
     total_comments = 0 
     total_cross_refs = 0
     
-    # First fetch all issues
-    print(f"\n🔍 Fetching issues...")
-    issues_processed = fetch_items_with_pagination(
-        repo, "issues", include_closed, existing_numbers, coverage, mode
-    )
-    total_processed += issues_processed[0]
-    total_comments += issues_processed[1] 
-    total_cross_refs += issues_processed[2]
+    # Fetch issues if requested
+    if item_types in ("issues", "both"):
+        print(f"\n🔍 Fetching issues...")
+        issues_processed = fetch_items_with_pagination(
+            repo, "issues", include_closed, existing_numbers, coverage, mode
+        )
+        total_processed += issues_processed[0]
+        total_comments += issues_processed[1] 
+        total_cross_refs += issues_processed[2]
+    else:
+        print(f"\n⏭️  Skipping issues (item_types={item_types})")
     
-    # Then fetch all PRs
-    print(f"\n🔍 Fetching pull requests...")
-    prs_processed = fetch_items_with_pagination(
-        repo, "pull_requests", include_closed, existing_numbers, coverage, mode
-    )
-    total_processed += prs_processed[0]
-    total_comments += prs_processed[1]
-    total_cross_refs += prs_processed[2]
+    # Fetch PRs if requested  
+    if item_types in ("prs", "both"):
+        print(f"\n🔍 Fetching pull requests...")
+        prs_processed = fetch_items_with_pagination(
+            repo, "pull_requests", include_closed, existing_numbers, coverage, mode
+        )
+        total_processed += prs_processed[0]
+        total_comments += prs_processed[1]
+        total_cross_refs += prs_processed[2]
+    else:
+        print(f"\n⏭️  Skipping pull requests (item_types={item_types})")
 
 
     # Load final results
