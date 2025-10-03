@@ -156,10 +156,54 @@ Use the deepwiki mcp as well to answer these (only ask a single question).
 
 ### 5. Update Issue Database
 
-Use Rich Issue MCP to add assessment recommendations:
+Use Rich Issue MCP to add assessment recommendations with structured markdown format:
 
 ```
 mcp__rich_issue_mcp__add_recommendation
+```
+
+**Format the `report` parameter as multiline markdown with sections:**
+
+```markdown
+# Issue #{issue_number} Assessment: "{issue_title}"
+
+## Summary
+{Brief 1-2 sentence summary of the issue}
+
+## Assessment Framework
+
+### Severity: **{Low/Medium/High}**
+{Explanation of severity assessment}
+
+### Frequency: **{Low/Medium/High}** 
+{Explanation of frequency assessment}
+
+### Prevalence: **{Low/Medium/High}**
+{Explanation of prevalence assessment}
+
+## Technical Assessment
+
+**Current State**: {Description of current state}
+
+**Solution Complexity: {Low/Medium/High}**
+- {Implementation details}
+- {Technical considerations}
+
+**Solution Risk: {Low/Medium/High}**
+- {Risk assessment}
+- {Potential side effects}
+
+**Affected Components:**
+- **Packages**: {List packages or "None"}
+- **Files**: {List file paths or directory paths, use #<path> for new files or "None"}
+- **Objects**: {List functions/classes or "None"}
+
+## Historical Context
+{Any relevant historical information, similar issues, community engagement}
+
+## Final Recommendation: **{CLOSE/DEPRIORITIZE/KEEP/PRIORITIZE}**
+
+**Rationale**: {Detailed explanation of the recommendation decision}
 ```
 
 Required parameters:
@@ -168,11 +212,11 @@ Required parameters:
 - `frequency` - Assessment: "low", "medium", "high"  
 - `prevalence` - Assessment: "low", "medium", "high"
 - `recommendation` - Final decision: "close", "deprioritize", "keep", "prioritize"
-- `report` - Comprehensive analysis text explaining the assessment
+- `report` - Use the structured markdown format above
 - `solution_complexity` - Implementation effort: "low", "medium", "high"
 - `solution_risk` - Implementation risk: "low", "medium", "high"
 - `affected_packages` - List of package names (max 2) that would need modification
-- `affected_paths` - List of file or folder paths (max 4) that would require changes
+- `affected_files` - List of file or directory paths (max 4), use #<path> for new files
 - `affected_objects` - List of function or class names (max 4) that would be modified
 
 This workflow ensures consistent, thorough evaluation of each issue while leveraging both quantitative metrics and qualitative JupyterLab expertise.
