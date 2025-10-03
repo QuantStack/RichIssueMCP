@@ -314,6 +314,9 @@ def add_recommendation(
     recommendation: str,
     solution_complexity: str,
     solution_risk: str,
+    affected_packages: list[str],
+    affected_paths: list[str],
+    affected_objects: list[str],
     repo: str | None = None,
 ) -> dict[str, Any]:
     """Add a recommendation to an issue in the database."""
@@ -345,6 +348,18 @@ def add_recommendation(
         errors.append("report must be a non-empty string")
     if not isinstance(issue_number, int):
         errors.append("issue_number must be an integer")
+    if not isinstance(affected_packages, list):
+        errors.append("affected_packages must be a list")
+    elif not all(isinstance(pkg, str) for pkg in affected_packages):
+        errors.append("affected_packages must be a list of strings")
+    if not isinstance(affected_paths, list):
+        errors.append("affected_paths must be a list")
+    elif not all(isinstance(path, str) for path in affected_paths):
+        errors.append("affected_paths must be a list of strings")
+    if not isinstance(affected_objects, list):
+        errors.append("affected_objects must be a list")
+    elif not all(isinstance(obj, str) for obj in affected_objects):
+        errors.append("affected_objects must be a list of strings")
 
     if errors:
         return {"status": "error", "message": "Validation failed", "errors": errors}
@@ -374,6 +389,9 @@ def add_recommendation(
         "recommendation": recommendation,
         "solution_complexity": solution_complexity,
         "solution_risk": solution_risk,
+        "affected_packages": affected_packages,
+        "affected_paths": affected_paths,
+        "affected_objects": affected_objects,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -404,9 +422,9 @@ def add_recommendation(
 @mcp.tool()
 def get_first_issue_without_recommendation(
     repo: str | None = None,
-    status: str | None = None,
+    status: str | None = "open",
 ) -> dict[str, Any] | None:
-    """Get the first issue without any recommendations. Optionally filter by status (open/closed)."""
+    """Get the first issue without any recommendations. Defaults to open issues, optionally filter by status (open/closed)."""
     repo = _get_repo_name(repo)
     issues = load_issues(repo)
 

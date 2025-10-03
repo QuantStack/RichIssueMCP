@@ -171,5 +171,8 @@ Required parameters:
 - `report` - Comprehensive analysis text explaining the assessment
 - `solution_complexity` - Implementation effort: "low", "medium", "high"
 - `solution_risk` - Implementation risk: "low", "medium", "high"
+- `affected_packages` - List of package names (max 2) that would need modification
+- `affected_paths` - List of file or folder paths (max 4) that would require changes
+- `affected_objects` - List of function or class names (max 4) that would be modified
 
 This workflow ensures consistent, thorough evaluation of each issue while leveraging both quantitative metrics and qualitative JupyterLab expertise.

@@ -144,6 +144,18 @@ def cmd_validate(args) -> None:
         exit(1)
 
 
+def cmd_tui(args) -> None:
+    """Execute TUI command to browse database interactively."""
+    from rich_issue_mcp.tui import run_tui
+    repo = args.repo or "jupyterlab/jupyterlab"
+    try:
+        run_tui(repo)
+    except KeyboardInterrupt:
+        print("\nTUI exited by user")
+    except Exception as e:
+        print(f"Error running TUI: {e}")
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -257,6 +269,15 @@ def main() -> None:
         help="Delete invalid entries from database after confirmation"
     )
     validate_parser.set_defaults(func=cmd_validate)
+
+    # TUI command
+    tui_parser = subparsers.add_parser(
+        "tui", help="Browse database interactively with Terminal UI"
+    )
+    tui_parser.add_argument(
+        "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to browse"
+    )
+    tui_parser.set_defaults(func=cmd_tui)
 
     args = parser.parse_args()
 
