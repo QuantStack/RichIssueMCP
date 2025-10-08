@@ -93,8 +93,8 @@ def cmd_clean(args) -> None:
         print("📁 No data directory found")
         return
 
-    # Find data files
-    patterns = ["raw-issues-*.json.gz", "enriched-issues-*.json.gz", "state-*.json"]
+    # Find data files (TinyDB database files)
+    patterns = ["issues-*.json"]
     files_to_delete = []
 
     for pattern in patterns:
@@ -139,7 +139,9 @@ def cmd_clean(args) -> None:
 def cmd_validate(args) -> None:
     """Execute validate command to check database integrity."""
     repo = args.repo or "jupyterlab/jupyterlab"
-    success = validate_database(repo, delete_invalid=getattr(args, 'delete_invalid', False))
+    success = validate_database(
+        repo, delete_invalid=getattr(args, "delete_invalid", False)
+    )
     if not success:
         exit(1)
 
@@ -147,6 +149,7 @@ def cmd_validate(args) -> None:
 def cmd_tui(args) -> None:
     """Execute TUI command to browse database interactively."""
     from rich_issue_mcp.tui import run_tui
+
     repo = args.repo or "jupyterlab/jupyterlab"
     try:
         run_tui(repo)
@@ -262,11 +265,15 @@ def main() -> None:
         "validate", help="Validate database integrity and completeness"
     )
     validate_parser.add_argument(
-        "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to validate"
+        "repo",
+        nargs="?",
+        default="jupyterlab/jupyterlab",
+        help="Repository to validate",
     )
     validate_parser.add_argument(
-        "--delete-invalid", action="store_true", 
-        help="Delete invalid entries from database after confirmation"
+        "--delete-invalid",
+        action="store_true",
+        help="Delete invalid entries from database after confirmation",
     )
     validate_parser.set_defaults(func=cmd_validate)
 

@@ -26,6 +26,12 @@ def get_database(repo: str) -> TinyDB:
 
 def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
     """Save issues to TinyDB database using TinyRecord for transaction safety."""
+    # Validate repo parameter to prevent incorrect file naming
+    if ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
+        raise ValueError(
+            f"Invalid repo name '{repo}': should be 'owner/repo', not a file path"
+        )
+
     db = get_database(repo)
 
     # Clear existing data first
@@ -38,12 +44,24 @@ def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
 
 def load_issues(repo: str) -> list[dict[str, Any]]:
     """Load all issues from TinyDB database."""
+    # Validate repo parameter to prevent incorrect file naming
+    if ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
+        raise ValueError(
+            f"Invalid repo name '{repo}': should be 'owner/repo', not a file path"
+        )
+
     db = get_database(repo)
     return db.all()
 
 
 def upsert_issues(repo: str, issues: list[dict[str, Any]]) -> None:
     """Upsert issues to TinyDB database (update existing, insert new)."""
+    # Validate repo parameter to prevent incorrect file naming
+    if ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
+        raise ValueError(
+            f"Invalid repo name '{repo}': should be 'owner/repo', not a file path"
+        )
+
     db = get_database(repo)
     Issue = Query()
 

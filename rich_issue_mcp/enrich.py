@@ -204,27 +204,38 @@ def get_issue_summary(
         "title": issue.get("title"),
         "conversation": issue.get("conversation"),
         "author": issue.get("author", {}).get("login"),
-        "age_days": issue.get("age_days"),
         "updatedAt": issue.get("updatedAt"),
         "labels": [label.get("name") for label in issue.get("labels", [])],
         "state": issue.get("state"),
+        "age_days": issue.get("age_days"),
+        "age_days_quartile": issue.get("age_days_quartile"),
         "comment_count": issue.get("comment_count"),
-        "conversation_total_emojis": issue.get("conversation_total_emojis"),
+        "comment_count_quartile": issue.get("comment_count_quartile"),
+        "engagements": issue.get("engagements"),
+        "engagements_quartile": issue.get("engagements_quartile"),
+        "engagements_per_day": issue.get("engagements_per_day"),
+        "engagements_per_day_quartile": issue.get("engagements_per_day_quartile"),
+        "body_emojis": issue.get("body_emojis"),
+        "body_emojis_quartile": issue.get("body_emojis_quartile"),
+        "comment_emojis": issue.get("comment_emojis"),
+        "comment_emojis_quartile": issue.get("comment_emojis_quartile"),
+        "total_emojis": issue.get("total_emojis"),
+        "comment_emojis_quartile": issue.get("comment_emojis_quartile"),
+        "total_emojis_quartile": issue.get("total_emojis_quartile"),
     }
 
     issue_json = json.dumps(
         compact_issue, indent=None, separators=(",", ":"), default=str
     )
 
-    prompt = f"""Analyze this GitHub issue and provide a concise 2-3 sentence summary that captures:
-1. The main problem or request
-2. Key discussion points and current status
-3. Community engagement level based on the metrics (use quartile columns to assess if metrics are globally low/high)
+    prompt = f"""Analyze this GitHub issue and write a concise 3 sentence summary:
+- The main problem or request, NOT restating issue number or url.
+- Key discussion points and current status (open, fixed & closed, not fixed & closed, etc)
+- Community engagement using engagement, age, comment and emoji metrics and their associated quartiles fields.
 
 Issue:
 {issue_json}
-
-Provide a clear, informative summary."""
+"""
 
     return get_mistral_completion(prompt, api_key, model)
 
@@ -234,21 +245,9 @@ def calc_comment_count(issue: dict[str, Any]) -> int:
     return len(issue.get("comments", []))
 
 
-def calc_reaction_totals(reaction_groups: list[dict[str, Any]]) -> dict[str, int]:
-    """Calculate reaction totals from reaction groups."""
-    total = sum(r.get("users", {}).get("totalCount", 0) for r in reaction_groups)
-    positive = sum(
-        r.get("users", {}).get("totalCount", 0)
-        for r in reaction_groups
-        if r.get("content") in ["THUMBS_UP", "HEART", "HOORAY"]
-    )
-    negative = sum(
-        r.get("users", {}).get("totalCount", 0)
-        for r in reaction_groups
-        if r.get("content") in ["THUMBS_DOWN", "CONFUSED"]
-    )
-
-    return {"total": total, "positive": positive, "negative": negative}
+def calc_reaction_totals(reaction_groups: list[dict[str, Any]]) -> int:
+    """Calculate total reactions from reaction groups."""
+    return sum(r.get("users", {}).get("totalCount", 0) for r in reaction_groups)
 
 
 def format_emoji_counts(reaction_groups: list[dict[str, Any]]) -> str:
@@ -256,12 +255,25 @@ def format_emoji_counts(reaction_groups: list[dict[str, Any]]) -> str:
     if not reaction_groups:
         return ""
 
+    # Map GitHub reaction content to actual emoji symbols
+    emoji_map = {
+        "THUMBS_UP": "👍",
+        "THUMBS_DOWN": "👎", 
+        "LAUGH": "😄",
+        "HOORAY": "🎉",
+        "CONFUSED": "😕",
+        "HEART": "❤️",
+        "ROCKET": "🚀",
+        "EYES": "👀"
+    }
+
     emoji_counts = []
     for reaction in reaction_groups:
         content = reaction.get("content", "")
         count = reaction.get("users", {}).get("totalCount", 0)
         if count > 0:
-            emoji_counts.append(f"{content}: {count}")
+            emoji = emoji_map.get(content, content)
+            emoji_counts.append(f"{emoji} {count}")
 
     return f" [{', '.join(emoji_counts)}]" if emoji_counts else ""
 
@@ -305,45 +317,49 @@ def create_conversation_column(issue: dict[str, Any]) -> str:
                 break
 
             comment_part = f"{comment_author}: {comment_body.strip()}"
-            # Add comment-level emoji counts (using reactions.totalCount for REST API)
-            reaction_count = comment.get("reactions", {}).get("totalCount", 0)
-            if reaction_count > 0:
-                comment_part += f" [👍 {reaction_count}]"
+            # Add comment-level emoji counts
+            if comment.get("reactionGroups"):
+                # Use GraphQL format with detailed emoji breakdown
+                emoji_counts = format_emoji_counts(comment.get("reactionGroups", []))
+                comment_part += emoji_counts
+            else:
+                # Fallback to REST API format (total count only)
+                reaction_count = comment.get("reactions", {}).get("totalCount", 0)
+                if reaction_count > 0:
+                    comment_part += f" [👍 {reaction_count}]"
             parts.append(comment_part)
             total_comment_chars += len(comment_body)
 
-    return "\n".join(parts)
+    return "\n\n".join(parts)
 
 
 def calc_reaction_metrics(issue: dict[str, Any]) -> dict[str, int]:
-    """Calculate reaction metrics for issue and comments."""
+    """Calculate reaction metrics for issue and comments separately."""
     # Handle both GraphQL format (reactionGroups) and REST format (reactions.totalCount)
     issue_reactions = calc_reaction_totals(issue.get("reactionGroups", []))
 
     # If no reactionGroups (REST API), try to get total from reactions field
-    if issue_reactions["total"] == 0 and "reactions" in issue:
-        issue_total = issue.get("reactions", {}).get("totalCount", 0)
-        issue_reactions = {"total": issue_total, "positive": 0, "negative": 0}
+    if issue_reactions == 0 and "reactions" in issue:
+        issue_reactions = issue.get("reactions", {}).get("totalCount", 0)
 
+    # Calculate comment reactions separately
     comment_reactions_total = 0
+
     for comment in issue.get("comments", []):
         # Try GraphQL format first
         comment_reactions = calc_reaction_totals(comment.get("reactionGroups", []))
 
         # If no reactionGroups (REST API), use reactions.totalCount
-        if comment_reactions["total"] == 0 and "reactions" in comment:
+        if comment_reactions == 0 and "reactions" in comment:
             comment_total = comment.get("reactions", {}).get("totalCount", 0)
             comment_reactions_total += comment_total
         else:
-            comment_reactions_total += comment_reactions["total"]
-
-    total_reactions = issue_reactions["total"] + comment_reactions_total
+            comment_reactions_total += comment_reactions
 
     return {
-        "issue_total_emojis": total_reactions,
-        "issue_positive_emojis": issue_reactions["positive"],
-        "issue_negative_emojis": issue_reactions["negative"],
-        "conversation_total_emojis": total_reactions,
+        "body_emojis": issue_reactions,
+        "comment_emojis": comment_reactions_total,
+        "total_emojis": issue_reactions + comment_reactions_total,
     }
 
 
@@ -354,9 +370,14 @@ def calc_age_days(issue: dict[str, Any]) -> int:
     return int((updated - created).days)
 
 
-def calc_activity_score(comment_count: int, age_days: int) -> float:
-    """Calculate activity score as comments per day."""
-    return comment_count / age_days if age_days > 0 else 0.0
+def calc_engagements(comment_count: int, total_emojis: int) -> int:
+    """Calculate total engagements (comments + reactions)."""
+    return comment_count + total_emojis
+
+
+def calc_engagements_per_day(engagements: int, age_days: int) -> float:
+    """Calculate engagements per day from total engagements and age."""
+    return engagements / age_days if age_days > 0 else 0.0
 
 
 def enrich_issue(
@@ -366,6 +387,10 @@ def enrich_issue(
     enriched = issue.copy()
 
     print(f"🔧 Enriching issue #{issue['number']}: {issue['title'][:50]}...")
+
+    # Initialize recommendations field as empty list if not present
+    if "recommendations" not in enriched:
+        enriched["recommendations"] = []
 
     # Add conversation column
     enriched["conversation"] = create_conversation_column(issue)
@@ -380,8 +405,11 @@ def enrich_issue(
     enriched.update(reactions)
 
     enriched["age_days"] = calc_age_days(issue)
-    enriched["activity_score"] = calc_activity_score(
-        enriched["comment_count"], enriched["age_days"]
+    enriched["engagements"] = calc_engagements(
+        enriched["comment_count"], enriched["total_emojis"]
+    )
+    enriched["engagements_per_day"] = calc_engagements_per_day(
+        enriched["engagements"], enriched["age_days"]
     )
 
     return enriched
@@ -392,10 +420,11 @@ def add_quartile_columns(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     metrics = [
         "comment_count",
         "age_days",
-        "activity_score",
-        "issue_positive_emojis",
-        "issue_negative_emojis",
-        "conversation_total_emojis",
+        "engagements",
+        "engagements_per_day",
+        "body_emojis",
+        "comment_emojis",
+        "total_emojis",
     ]
 
     df = pd.DataFrame(issues)
@@ -404,13 +433,16 @@ def add_quartile_columns(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for metric in metrics:
         if metric in df.columns:
             try:
-                quartile_col = f"{metric}_q"
+                quartile_col = f"{metric}_quartile"
                 df[quartile_col] = pd.qcut(
-                    df[metric], q=4, labels=[0.25, 0.5, 0.75, 1.0], duplicates="drop"
+                    df[metric],
+                    q=4,
+                    labels=["Bottom25%", "Bottom50%", "Top50%", "Top25%"],
+                    duplicates="raise",
                 )
             except ValueError:
                 # Handle case where all values are the same
-                df[f"{metric}_q"] = 1.0
+                df[f"{metric}_quartile"] = "Top25%"
 
     return df.to_dict("records")
 

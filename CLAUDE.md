@@ -8,32 +8,36 @@ RICH ISSUE MCP (Enhanced Repo Information for AI Triaging) is an MCP server that
 
 ## Architecture
 
-The system consists of four main Python packages under `rich_issue_mcp/`:
+The system consists of several Python modules under `rich_issue_mcp/`:
 
-### 1. Data Pulling (rich_issue_mcp/pull/)
-- Python package that pulls raw issues from GitHub repositories using intelligent paging
-- Uses `gh` CLI for GitHub API access with weekly chunking based on `updatedAt` timestamps
-- Implements incremental updates to avoid refetching unchanged issues
-- Maintains state tracking in `data/state-{repo}.json` for last fetch timestamps
-- Merges new/updated issues with existing data while preserving all information
-- Saves raw data as gzipped JSON in /data folder
+### Core Modules
+- **rich_issue_mcp/pull.py**: Data pulling module that fetches raw issues from GitHub repositories using intelligent paging
+  - Uses `gh` CLI for GitHub API access with weekly chunking based on `updatedAt` timestamps
+  - Implements incremental updates to avoid refetching unchanged issues
+  - Uses TinyDB for persistent storage and direct issue comparison for updates
+  - Merges new/updated issues with existing data while preserving all information
+  - Stores data directly in TinyDB database files
 
-### 2. Data Enrichment (rich_issue_mcp/enrich/)
-- Python package that processes raw issue data
-- Adds embeddings for semantic search (via Mistral API)
-- Computes metrics: reactions, comments, age, activity scores
-- Assigns quartiles for all metrics using pandas `qcut()`
-- Saves enriched data as gzipped JSON in /data folder
+- **rich_issue_mcp/enrich.py**: Data enrichment module that processes raw issue data
+  - Adds embeddings for semantic search (via Mistral API)
+  - Computes metrics: reactions, comments, age, activity scores
+  - Assigns quartiles for all metrics using pandas `qcut()` with descriptive labels (Bottom25%, Bottom50%, Top50%, Top25%)
+  - Updates TinyDB database with enriched data
 
-### 3. MCP Server (rich_issue_mcp/mcp/)
-- FastMCP server providing database access tools
-- Serves enriched issue data to AI agents
-- Tools: get_issue, find_similar_issues, find_linked_issues, get_issue_metrics
+- **rich_issue_mcp/mcp_server.py**: FastMCP server providing database access tools
+  - Serves enriched issue data to AI agents
+  - Tools: get_issue, find_similar_issues, find_linked_issues, get_issue_metrics
 
-### 4. CLI Orchestration (rich_issue_mcp/cli/)
-- Python CLI for coordinating all components
-- Unified `rich_issue_mcp` command with subcommands
-- Orchestrates the entire workflow from pull to triaging
+- **rich_issue_mcp/cli.py**: CLI orchestration module
+  - Unified `rich_issue_mcp` command with subcommands
+  - Orchestrates the entire workflow from pull to triaging
+
+### Additional Modules
+- **rich_issue_mcp/config.py**: Configuration management and caching
+- **rich_issue_mcp/database.py**: Database utilities and operations
+- **rich_issue_mcp/validate.py**: Data validation utilities
+- **rich_issue_mcp/visualize.py**: Data visualization tools
+- **rich_issue_mcp/tui.py**: Text user interface components
 
 ## Workflow
 
@@ -51,7 +55,7 @@ rich_issue_mcp pull jupyterlab/jupyterlab
 rich_issue_mcp pull jupyterlab/jupyterlab --refetch
 
 # 2. Enrich data with embeddings and metrics
-rich_issue_mcp enrich data/raw-issues-jupyterlab-jupyterlab.json.gz
+rich_issue_mcp enrich jupyterlab/jupyterlab
 
 # 3. Start MCP server for database access
 rich_issue_mcp mcp &
@@ -80,10 +84,11 @@ ruff check rich_issue_mcp/ && ruff format rich_issue_mcp/ && mypy rich_issue_mcp
 
 ## Key Files
 
-- `rich_issue_mcp/cli/cli.py`: Main CLI entry point with all subcommands
-- `rich_issue_mcp/pull/pull.py`: Python module for fetching raw issues from GitHub
-- `rich_issue_mcp/enrich/enrich.py`: Python enrichment pipeline with embeddings/metrics
-- `rich_issue_mcp/mcp/mcp_server.py`: FastMCP server for database access
+- `rich_issue_mcp/cli.py`: Main CLI entry point with all subcommands
+- `rich_issue_mcp/pull.py`: Python module for fetching raw issues from GitHub
+- `rich_issue_mcp/enrich.py`: Python enrichment pipeline with embeddings/metrics
+- `rich_issue_mcp/mcp_server.py`: FastMCP server for database access
+- `rich_issue_mcp/config.py`: Configuration management and API key handling
 - `pyproject.toml`: Project configuration
 
 ## Dependencies
@@ -108,3 +113,56 @@ ruff check rich_issue_mcp/ && ruff format rich_issue_mcp/ && mypy rich_issue_mcp
 - **MCP Server**: FastMCP provides database access tools for AI agents
 - **CLI Integration**: Single `rich_issue_mcp` command orchestrates entire pipeline with direct Python imports
 - **Direct Integration**: No subprocess calls between internal modules - all use direct Python imports
+
+## Project Structure
+
+```
+RichIssueMCP/
+├── rich_issue_mcp/           # Main Python package
+│   ├── __init__.py
+│   ├── __main__.py          # Entry point for python -m rich_issue_mcp
+│   ├── cli.py               # CLI orchestration with all subcommands
+│   ├── pull.py              # GitHub issue fetching via gh CLI
+│   ├── enrich.py            # Data enrichment with embeddings/metrics
+│   ├── database.py          # TinyDB operations and utilities
+│   ├── mcp_server.py        # FastMCP server for database access
+│   ├── config.py            # Configuration management and caching
+│   ├── validate.py          # Data validation utilities
+│   ├── visualize.py         # Data visualization tools
+│   └── tui.py               # Text user interface components
+├── data/                    # Data storage directory
+│   └── issues-{repo}.json   # TinyDB database files (e.g., issues-jupyterlab-jupyterlab.json)
+├── dcache/                  # Diskcache directory for API response caching
+├── example/                 # Example implementations and agents
+├── config.toml              # Configuration file (API keys, settings)
+├── config.toml.example      # Example configuration template
+├── pyproject.toml           # Python project configuration
+├── README.md                # Project documentation
+├── CLAUDE.md                # Development instructions for Claude Code
+└── uv.lock                  # Dependency lock file
+```
+
+## Development Notes
+
+### Loading Database for Testing
+To test database functionality, load the database the same way as the MCP server:
+
+```python
+from rich_issue_mcp.database import load_issues
+
+def _get_repo_name(repo=None):
+    """Get repository name, defaulting to jupyterlab/jupyterlab."""
+    return repo or "jupyterlab/jupyterlab"
+
+# Load exactly like MCP server  
+repo = _get_repo_name()
+issues = load_issues(repo)
+
+# Find specific issue
+issue_3224 = next((i for i in issues if i["number"] == 3224), None)
+```
+
+**Note**: The database must be populated first by running:
+1. `rich_issue_mcp pull jupyterlab/jupyterlab --mode create` (to fetch raw issues in create mode)
+2. `rich_issue_mcp enrich jupyterlab/jupyterlab` (to add embeddings and metrics)
+3. Subsequent updates use: `rich_issue_mcp pull jupyterlab/jupyterlab --mode update`

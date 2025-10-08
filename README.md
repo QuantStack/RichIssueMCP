@@ -21,7 +21,7 @@ rich_issue_mcp pull jupyterlab/jupyterlab
 rich_issue_mcp pull jupyterlab/jupyterlab --refetch
 
 # 2. Enrich data with embeddings and metrics
-rich_issue_mcp enrich data/raw-issues-jupyterlab-jupyterlab.json.gz
+rich_issue_mcp enrich jupyterlab/jupyterlab
 
 # 3. Start MCP server for database access
 rich_issue_mcp mcp &

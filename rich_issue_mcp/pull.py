@@ -162,7 +162,9 @@ def make_rest_request(
     return response
 
 
-def make_graphql_request(query: str, variables: dict[str, Any] | None = None, max_retries: int = 5) -> requests.Response:
+def make_graphql_request(
+    query: str, variables: dict[str, Any] | None = None, max_retries: int = 5
+) -> requests.Response:
     """Make a GraphQL API request to GitHub with rate limit handling."""
     token = get_github_token()
     headers = {
@@ -170,13 +172,15 @@ def make_graphql_request(query: str, variables: dict[str, Any] | None = None, ma
         "Content-Type": "application/json",
         "User-Agent": "RichIssueMCP/1.0",
     }
-    
+
     payload = {"query": query}
     if variables:
         payload["variables"] = variables
 
     for attempt in range(max_retries):
-        response = requests.post("https://api.github.com/graphql", headers=headers, json=payload)
+        response = requests.post(
+            "https://api.github.com/graphql", headers=headers, json=payload
+        )
 
         # If successful, return immediately
         if response.status_code == 200:
@@ -194,7 +198,9 @@ def make_graphql_request(query: str, variables: dict[str, Any] | None = None, ma
                     if rate_limit_reset:
                         reset_time = int(rate_limit_reset)
                         current_time = int(time.time())
-                        time_until_reset = reset_time - current_time + 10  # Add 10 second buffer
+                        time_until_reset = (
+                            reset_time - current_time + 10
+                        )  # Add 10 second buffer
 
                         # Wait until rate limit resets
                         wait_time = max(time_until_reset, 60)  # Minimum 60 seconds
@@ -253,17 +259,17 @@ def fetch_issues_page_graphql(
         Tuple of (items_list, next_cursor, has_next_page)
     """
     owner, name = repo.split("/")
-    
+
     # Set sort parameters based on mode
     order_by = "CREATED_AT" if mode == "create" else "UPDATED_AT"
-    
+
     # Build states filter - for PRs, include MERGED state as well
     if item_type == "pull_requests":
         states = ["OPEN", "CLOSED", "MERGED"] if include_closed else ["OPEN"]
     else:
         states = ["OPEN", "CLOSED"] if include_closed else ["OPEN"]
     states_filter = ", ".join(states)
-    
+
     # Build GraphQL query based on item type (create mode - sort by CREATED_AT)
     if item_type == "issues":
         query = f"""
@@ -294,6 +300,12 @@ def fetch_issues_page_graphql(
                         assignees(first: 10) {{
                             nodes {{
                                 login
+                            }}
+                        }}
+                        reactionGroups {{
+                            content
+                            users {{
+                                totalCount
                             }}
                         }}
                     }}
@@ -336,6 +348,12 @@ def fetch_issues_page_graphql(
                                 login
                             }}
                         }}
+                        reactionGroups {{
+                            content
+                            users {{
+                                totalCount
+                            }}
+                        }}
                         mergeable
                         merged
                         mergedAt
@@ -350,26 +368,22 @@ def fetch_issues_page_graphql(
             }}
         }}
         """
-    
-    variables = {
-        "owner": owner,
-        "name": name,
-        "cursor": cursor
-    }
-    
+
+    variables = {"owner": owner, "name": name, "cursor": cursor}
+
     response = make_graphql_request(query, variables)
-    
+
     if response.status_code != 200:
         raise Exception(f"GraphQL API failed: {response.status_code} - {response.text}")
-    
+
     data = response.json()
-    
+
     if "errors" in data:
         raise Exception(f"GraphQL errors: {data['errors']}")
-    
+
     repository = data["data"]["repository"]
     rate_limit = data["data"]["rateLimit"]
-    
+
     # Get the appropriate data based on item type
     if item_type == "issues":
         items_data = repository["issues"]
@@ -377,7 +391,7 @@ def fetch_issues_page_graphql(
     else:  # pull_requests
         items_data = repository["pullRequests"]
         type_name = "pull_request"
-    
+
     # Convert GraphQL format to REST API format for compatibility
     items = []
     for node in items_data["nodes"]:
@@ -390,32 +404,40 @@ def fetch_issues_page_graphql(
             "updated_at": node["updatedAt"],
             "html_url": node["url"],
             "user": {"login": node["author"]["login"] if node["author"] else "ghost"},
-            "labels": [{"name": label["name"], "color": label["color"]} for label in node["labels"]["nodes"]],
-            "assignees": [{"login": assignee["login"]} for assignee in node["assignees"]["nodes"]],
+            "labels": [
+                {"name": label["name"], "color": label["color"]}
+                for label in node["labels"]["nodes"]
+            ],
+            "assignees": [
+                {"login": assignee["login"]} for assignee in node["assignees"]["nodes"]
+            ],
+            "reactionGroups": node.get("reactionGroups", []),
             "item_type": type_name,
         }
-        
+
         # Add PR-specific fields
         if item_type == "pull_requests":
-            item.update({
-                "mergeable": node.get("mergeable"),
-                "merged": node.get("merged", False),
-                "merged_at": node.get("mergedAt"),
-                "base_ref": node.get("baseRefName"),
-                "head_ref": node.get("headRefName"),
-            })
-        
+            item.update(
+                {
+                    "mergeable": node.get("mergeable"),
+                    "merged": node.get("merged", False),
+                    "merged_at": node.get("mergedAt"),
+                    "base_ref": node.get("baseRefName"),
+                    "head_ref": node.get("headRefName"),
+                }
+            )
+
         items.append(item)
-    
+
     page_info = items_data["pageInfo"]
     next_cursor = page_info["endCursor"] if page_info["hasNextPage"] else None
     has_next_page = page_info["hasNextPage"]
-    
+
     # Print rate limit info
     remaining = rate_limit["remaining"]
     reset_at = rate_limit["resetAt"]
-    reset_time = datetime.fromisoformat(reset_at.replace('Z', '+00:00'))
-    
+    reset_time = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+
     cursor_info = f"cursor={cursor[:10]}..." if cursor else "first page"
     item_name = "issues" if item_type == "issues" else "PRs"
     print(
@@ -423,13 +445,13 @@ def fetch_issues_page_graphql(
         f"Rate limit: {remaining} remaining (resets at {reset_time.strftime('%H:%M:%S')}), "
         f"Has next: {has_next_page}"
     )
-    
+
     # Debug: show first and last issue numbers on this page
     if items:
         first_num = items[0]["number"]
         last_num = items[-1]["number"]
         print(f"  🔢 Issue range on this page: #{first_num} to #{last_num}")
-        
+
         # Look for missing PR 2525
         if first_num <= 2525 <= last_num:
             print(f"  🎯 This page should contain PR #2525!")
@@ -439,7 +461,7 @@ def fetch_issues_page_graphql(
                 print(f"  ✅ Found PR #2525! Fix successful.")
     else:
         print(f"  🔢 No items returned from GraphQL")
-    
+
     return items, next_cursor, has_next_page
 
 
@@ -633,7 +655,7 @@ def process_and_save_issue(repo: str, issue: dict[str, Any]) -> dict[str, Any] |
         ],
         "comments": comments_list,
         "number_of_comments": len(comments_list),
-        "reactionGroups": [],  # Issues API doesn't provide detailed reaction groups easily
+        "reactionGroups": issue.get("reactionGroups", []),
         "cross_references": cross_references,
     }
 
@@ -712,7 +734,7 @@ def fetch_items_with_pagination(
     mode: str,
 ) -> tuple[int, int, int]:
     """Fetch all items (issues or PRs) with pagination.
-    
+
     Returns:
         Tuple of (processed_count, comments_count, cross_refs_count)
     """
@@ -721,7 +743,7 @@ def fetch_items_with_pagination(
     total_processed = 0
     total_comments = 0
     total_cross_refs = 0
-    
+
     while True:
         print(f"\n🔍 Fetching {item_type} page {page_num}...")
         page_items, next_cursor, has_next_page = fetch_issues_page_graphql(
@@ -735,18 +757,20 @@ def fetch_items_with_pagination(
         # Filter out existing items in create mode
         if mode == "create" and existing_numbers:
             original_count = len(page_items)
-            
+
             # Debug: Check first few items in this page
             if page_items:
                 sample_numbers = [item["number"] for item in page_items[:5]]
-                sample_in_db = [num for num in sample_numbers if num in existing_numbers]
-                print(f"  🐛 Debug: Page has {original_count} items, sample numbers: {sample_numbers}")
+                sample_in_db = [
+                    num for num in sample_numbers if num in existing_numbers
+                ]
+                print(
+                    f"  🐛 Debug: Page has {original_count} items, sample numbers: {sample_numbers}"
+                )
                 print(f"  🐛 Debug: Sample numbers in existing_numbers: {sample_in_db}")
                 print(f"  🐛 Debug: existing_numbers size: {len(existing_numbers)}")
-            
-            page_items = filter_new_issues_for_create_mode(
-                page_items, existing_numbers
-            )
+
+            page_items = filter_new_issues_for_create_mode(page_items, existing_numbers)
             filtered_count = original_count - len(page_items)
             if filtered_count > 0:
                 print(
@@ -769,7 +793,9 @@ def fetch_items_with_pagination(
             needs_processing = page_needs_processing(page_items, coverage, mode)
 
         if needs_processing:
-            print(f"🔧 Processing {item_type} page {page_num} ({len(page_items)} items)...")
+            print(
+                f"🔧 Processing {item_type} page {page_num} ({len(page_items)} items)..."
+            )
             processed_items = process_page_issues(repo, page_items)
 
             # Count stats
@@ -787,7 +813,9 @@ def fetch_items_with_pagination(
             )
 
         else:
-            print(f"⏭️  Skipping {item_type} page {page_num} - all items already in database")
+            print(
+                f"⏭️  Skipping {item_type} page {page_num} - all items already in database"
+            )
 
         # Stop if no more pages
         if not has_next_page:
@@ -907,9 +935,9 @@ def fetch_issues(
 
     # Initialize counters
     total_processed = 0
-    total_comments = 0 
+    total_comments = 0
     total_cross_refs = 0
-    
+
     # Fetch issues if requested
     if item_types in ("issues", "both"):
         print(f"\n🔍 Fetching issues...")
@@ -917,12 +945,12 @@ def fetch_issues(
             repo, "issues", include_closed, existing_numbers, coverage, mode
         )
         total_processed += issues_processed[0]
-        total_comments += issues_processed[1] 
+        total_comments += issues_processed[1]
         total_cross_refs += issues_processed[2]
     else:
         print(f"\n⏭️  Skipping issues (item_types={item_types})")
-    
-    # Fetch PRs if requested  
+
+    # Fetch PRs if requested
     if item_types in ("prs", "both"):
         print(f"\n🔍 Fetching pull requests...")
         prs_processed = fetch_items_with_pagination(
@@ -933,7 +961,6 @@ def fetch_issues(
         total_cross_refs += prs_processed[2]
     else:
         print(f"\n⏭️  Skipping pull requests (item_types={item_types})")
-
 
     # Load final results
     try:
