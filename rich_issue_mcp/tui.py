@@ -107,11 +107,21 @@ class IssueTUI:
         if len(title) > 50:
             title = title[:47] + "..."
 
-        # Get recommendation status
+        # Get recommendation status with action info
         recommendations = issue.get("recommendations", [])
-        rec_status = (
-            f"({len(recommendations)} recs)" if recommendations else "(no recs)"
-        )
+        if recommendations:
+            # Show latest recommendation action if using new schema
+            latest_rec = recommendations[-1]
+            if "action" in latest_rec:
+                action = latest_rec["action"]
+                confidence = latest_rec.get("confidence", "?")
+                rec_status = f"({len(recommendations)} recs: {action}/{confidence})"
+            else:
+                # Legacy format
+                old_action = latest_rec.get("recommendation", "?")
+                rec_status = f"({len(recommendations)} recs: {old_action})"
+        else:
+            rec_status = "(no recs)"
 
         return f"#{number:>5} {state:>6} {issue_type:>5} | {title:<50} {rec_status}"
 
@@ -283,28 +293,77 @@ class IssueTUI:
             lines.append(("-" * 20, 0))
             for i, rec in enumerate(recommendations, 1):
                 lines.append((f"Recommendation {i}:", curses.A_BOLD))
-                lines.append((f"  Severity: {rec.get('severity', '?')}", 0))
-                lines.append((f"  Frequency: {rec.get('frequency', '?')}", 0))
-                lines.append((f"  Prevalence: {rec.get('prevalence', '?')}", 0))
-                lines.append((f"  Recommendation: {rec.get('recommendation', '?')}", 0))
-                lines.append(
-                    (f"  Complexity: {rec.get('solution_complexity', '?')}", 0)
-                )
-                lines.append((f"  Risk: {rec.get('solution_risk', '?')}", 0))
 
-                # Affected components
-                if rec.get("affected_packages"):
-                    lines.append(
-                        (f"  Packages: {', '.join(rec['affected_packages'])}", 0)
-                    )
-                if rec.get("affected_paths"):
-                    lines.append((f"  Paths: {', '.join(rec['affected_paths'])}", 0))
-                if rec.get("affected_objects"):
-                    lines.append(
-                        (f"  Objects: {', '.join(rec['affected_objects'])}", 0)
-                    )
+                # Check for new schema format vs old format
+                if "action" in rec:
+                    # New schema format
+                    lines.append((f"  Action: {rec.get('action', '?')}", curses.A_BOLD))
+                    lines.append((f"  Confidence: {rec.get('confidence', '?')}", 0))
 
-                # Report
+                    # Summary and rationale
+                    summary = rec.get("summary", "")
+                    if summary:
+                        lines.append((f"  Summary: {summary}", 0))
+
+                    rationale = rec.get("rationale", "")
+                    if rationale:
+                        lines.append((f"  Rationale: {rationale}", 0))
+
+                    # Analysis section
+                    analysis = rec.get("analysis", {})
+                    if analysis:
+                        lines.append(("  Analysis:", curses.A_BOLD))
+                        lines.append((f"    Severity: {analysis.get('severity', '?')}", 0))
+                        lines.append((f"    Frequency: {analysis.get('frequency', '?')}", 0))
+                        lines.append((f"    Prevalence: {analysis.get('prevalence', '?')}", 0))
+                        lines.append((f"    Effort: {analysis.get('effort_estimate', '?')}", 0))
+                        lines.append((f"    Risk: {analysis.get('solution_risk', '?')}", 0))
+
+                    # Context section
+                    context = rec.get("context", {})
+                    if context:
+                        if context.get("affected_packages"):
+                            lines.append((f"  Packages: {', '.join(context['affected_packages'])}", 0))
+                        if context.get("affected_paths"):
+                            lines.append((f"  Paths: {', '.join(context['affected_paths'])}", 0))
+                        if context.get("affected_components"):
+                            lines.append((f"  Components: {', '.join(context['affected_components'])}", 0))
+                        if context.get("related_issues"):
+                            related_str = ', '.join(f"#{num}" for num in context['related_issues'])
+                            lines.append((f"  Related: {related_str}", 0))
+                        if context.get("merge_with"):
+                            merge_str = ', '.join(f"#{num}" for num in context['merge_with'])
+                            lines.append((f"  Merge with: {merge_str}", 0))
+
+                    # Meta section
+                    meta = rec.get("meta", {})
+                    if meta:
+                        reviewer = meta.get("reviewer", "?")
+                        timestamp = meta.get("timestamp", "?")
+                        lines.append((f"  By: {reviewer} at {timestamp}", 0))
+                        if meta.get("model_version"):
+                            lines.append((f"  Model: {meta['model_version']}", 0))
+
+                else:
+                    # Legacy schema format (backward compatibility)
+                    lines.append((f"  Severity: {rec.get('severity', '?')}", 0))
+                    lines.append((f"  Frequency: {rec.get('frequency', '?')}", 0))
+                    lines.append((f"  Prevalence: {rec.get('prevalence', '?')}", 0))
+                    lines.append((f"  Recommendation: {rec.get('recommendation', '?')}", 0))
+                    lines.append((f"  Complexity: {rec.get('solution_complexity', '?')}", 0))
+                    lines.append((f"  Risk: {rec.get('solution_risk', '?')}", 0))
+
+                    # Legacy affected components
+                    if rec.get("affected_packages"):
+                        lines.append((f"  Packages: {', '.join(rec['affected_packages'])}", 0))
+                    if rec.get("affected_paths"):
+                        lines.append((f"  Paths: {', '.join(rec['affected_paths'])}", 0))
+                    if rec.get("affected_objects"):
+                        lines.append((f"  Objects: {', '.join(rec['affected_objects'])}", 0))
+
+                    lines.append((f"  Timestamp: {rec.get('timestamp', '?')}", 0))
+
+                # Report (common to both formats)
                 report = rec.get("report", "")
                 if report:
                     lines.append(("  Report:", curses.A_BOLD))
@@ -312,7 +371,6 @@ class IssueTUI:
                     for rline_text, rline_attr in report_lines:
                         lines.append((f"    {rline_text}", rline_attr))
 
-                lines.append((f"  Timestamp: {rec.get('timestamp', '?')}", 0))
                 lines.append(("", 0))
 
         # Cross references

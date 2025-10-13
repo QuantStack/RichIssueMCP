@@ -307,43 +307,54 @@ def export_all_open_issues(
 @mcp.tool()
 def add_recommendation(
     issue_number: int,
+    action: str,
+    confidence: str,
+    summary: str,
+    rationale: str,
+    report: str,
     severity: str,
     frequency: str,
     prevalence: str,
-    report: str,
-    recommendation: str,
-    solution_complexity: str,
+    effort_estimate: str,
     solution_risk: str,
     affected_packages: list[str],
     affected_paths: list[str],
-    affected_objects: list[str],
+    affected_components: list[str],
+    related_issues: list[int],
+    merge_with: list[int],
+    reviewer: str = "ai",
+    model_version: str | None = None,
     repo: str | None = None,
 ) -> dict[str, Any]:
-    """Add a recommendation to an issue in the database."""
+    """Add a recommendation to an issue in the database using the new enhanced schema."""
 
     # Validate input parameters
     valid_levels = {"low", "medium", "high"}
-    valid_recommendations = {"keep", "close", "deprioritize", "prioritize"}
+    valid_actions = {
+        "close_completed", "close_merge", "close_not_planned", "close_invalid",
+        "prioritize_high", "prioritize_medium", "prioritize_low", "needs_more_info"
+    }
 
     errors = []
+    if action not in valid_actions:
+        errors.append(f"action must be one of: {', '.join(sorted(valid_actions))}")
+    if confidence not in valid_levels:
+        errors.append(f"confidence must be one of: {', '.join(sorted(valid_levels))}")
     if severity not in valid_levels:
         errors.append(f"severity must be one of: {', '.join(sorted(valid_levels))}")
     if frequency not in valid_levels:
         errors.append(f"frequency must be one of: {', '.join(sorted(valid_levels))}")
     if prevalence not in valid_levels:
         errors.append(f"prevalence must be one of: {', '.join(sorted(valid_levels))}")
-    if solution_complexity not in valid_levels:
-        errors.append(
-            f"solution_complexity must be one of: {', '.join(sorted(valid_levels))}"
-        )
+    if effort_estimate not in valid_levels:
+        errors.append(f"effort_estimate must be one of: {', '.join(sorted(valid_levels))}")
     if solution_risk not in valid_levels:
-        errors.append(
-            f"solution_risk must be one of: {', '.join(sorted(valid_levels))}"
-        )
-    if recommendation not in valid_recommendations:
-        errors.append(
-            f"recommendation must be one of: {', '.join(sorted(valid_recommendations))}"
-        )
+        errors.append(f"solution_risk must be one of: {', '.join(sorted(valid_levels))}")
+
+    if not isinstance(summary, str) or not summary.strip():
+        errors.append("summary must be a non-empty string")
+    if not isinstance(rationale, str) or not rationale.strip():
+        errors.append("rationale must be a non-empty string")
     if not isinstance(report, str) or not report.strip():
         errors.append("report must be a non-empty string")
     if not isinstance(issue_number, int):
@@ -356,10 +367,18 @@ def add_recommendation(
         errors.append("affected_paths must be a list")
     elif not all(isinstance(path, str) for path in affected_paths):
         errors.append("affected_paths must be a list of strings")
-    if not isinstance(affected_objects, list):
-        errors.append("affected_objects must be a list")
-    elif not all(isinstance(obj, str) for obj in affected_objects):
-        errors.append("affected_objects must be a list of strings")
+    if not isinstance(affected_components, list):
+        errors.append("affected_components must be a list")
+    elif not all(isinstance(comp, str) for comp in affected_components):
+        errors.append("affected_components must be a list of strings")
+    if not isinstance(related_issues, list):
+        errors.append("related_issues must be a list")
+    elif not all(isinstance(issue_id, int) for issue_id in related_issues):
+        errors.append("related_issues must be a list of integers")
+    if not isinstance(merge_with, list):
+        errors.append("merge_with must be a list")
+    elif not all(isinstance(issue_id, int) for issue_id in merge_with):
+        errors.append("merge_with must be a list of integers")
 
     if errors:
         return {"status": "error", "message": "Validation failed", "errors": errors}
@@ -380,19 +399,37 @@ def add_recommendation(
     if "recommendations" not in issue:
         issue["recommendations"] = []
 
-    # Create new recommendation
+    # Generate review ID
+    import uuid
+    review_id = str(uuid.uuid4())
+
+    # Create new recommendation with enhanced schema
     new_recommendation = {
-        "severity": severity,
-        "frequency": frequency,
-        "prevalence": prevalence,
+        "action": action,
+        "confidence": confidence,
+        "summary": summary.strip(),
+        "rationale": rationale.strip(),
         "report": report.strip(),
-        "recommendation": recommendation,
-        "solution_complexity": solution_complexity,
-        "solution_risk": solution_risk,
-        "affected_packages": affected_packages,
-        "affected_paths": affected_paths,
-        "affected_objects": affected_objects,
-        "timestamp": datetime.now().isoformat(),
+        "analysis": {
+            "severity": severity,
+            "frequency": frequency,
+            "prevalence": prevalence,
+            "effort_estimate": effort_estimate,
+            "solution_risk": solution_risk,
+        },
+        "context": {
+            "affected_packages": affected_packages,
+            "affected_paths": affected_paths,
+            "affected_components": affected_components,
+            "related_issues": related_issues,
+            "merge_with": merge_with,
+        },
+        "meta": {
+            "reviewer": reviewer,
+            "timestamp": datetime.now().isoformat(),
+            "model_version": model_version,
+            "review_id": review_id,
+        },
     }
 
     # Add recommendation
@@ -417,6 +454,195 @@ def add_recommendation(
 
     except Exception as e:
         return {"status": "error", "message": f"Failed to save database: {e}"}
+
+
+@mcp.tool()
+def get_recommendation_schema() -> dict[str, Any]:
+    """Get the complete schema for issue recommendations."""
+    return {
+        "schema_version": "1.0",
+        "description": "Enhanced schema for issue recommendations with structured analysis",
+        "fields": {
+            "action": {
+                "type": "string",
+                "required": True,
+                "description": "The recommended action to take on the issue",
+                "enum": [
+                    "close_completed",
+                    "close_merge",
+                    "close_not_planned",
+                    "close_invalid",
+                    "prioritize_high",
+                    "prioritize_medium",
+                    "prioritize_low",
+                    "needs_more_info"
+                ],
+                "enum_descriptions": {
+                    "close_completed": "Issue has been completed/fixed",
+                    "close_merge": "Issue should be merged with another issue",
+                    "close_not_planned": "Valid issue but not aligned with roadmap",
+                    "close_invalid": "Invalid issue (spam, off-topic, etc.)",
+                    "prioritize_high": "Critical issue needing immediate attention",
+                    "prioritize_medium": "Important issue for next sprint/release",
+                    "prioritize_low": "Valid issue but lower priority",
+                    "needs_more_info": "Requires additional details from reporter"
+                }
+            },
+            "confidence": {
+                "type": "string",
+                "required": True,
+                "description": "Confidence level in the recommendation",
+                "enum": ["low", "medium", "high"]
+            },
+            "summary": {
+                "type": "string",
+                "required": True,
+                "description": "Brief one-line summary of the recommendation",
+                "example": "Close as duplicate of #123"
+            },
+            "rationale": {
+                "type": "string",
+                "required": True,
+                "description": "Short explanation for why this action is recommended",
+                "example": "Same root cause as #123, already has detailed discussion"
+            },
+            "report": {
+                "type": "string",
+                "required": True,
+                "description": "Full markdown report with detailed analysis",
+                "example": "## Analysis\\n\\nThis issue appears to be..."
+            },
+            "analysis": {
+                "type": "object",
+                "required": True,
+                "description": "Structured analysis of the issue",
+                "properties": {
+                    "severity": {
+                        "type": "string",
+                        "required": True,
+                        "description": "Impact on users/system",
+                        "enum": ["low", "medium", "high"]
+                    },
+                    "frequency": {
+                        "type": "string",
+                        "required": True,
+                        "description": "How often the issue occurs",
+                        "enum": ["low", "medium", "high"]
+                    },
+                    "prevalence": {
+                        "type": "string",
+                        "required": True,
+                        "description": "How many users are affected",
+                        "enum": ["low", "medium", "high"]
+                    },
+                    "effort_estimate": {
+                        "type": "string",
+                        "required": True,
+                        "description": "Estimated development effort required",
+                        "enum": ["low", "medium", "high"]
+                    },
+                    "solution_risk": {
+                        "type": "string",
+                        "required": True,
+                        "description": "Risk of implementing solution (breaking changes, etc.)",
+                        "enum": ["low", "medium", "high"]
+                    }
+                }
+            },
+            "context": {
+                "type": "object",
+                "required": True,
+                "description": "Contextual information about the issue",
+                "properties": {
+                    "affected_packages": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Code packages/modules affected",
+                        "example": ["@jupyterlab/notebook", "@jupyterlab/cells"]
+                    },
+                    "affected_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "File paths affected",
+                        "example": ["packages/notebook/src/widget.ts"]
+                    },
+                    "affected_components": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "UI/system components affected",
+                        "example": ["NotebookPanel", "CodeCell"]
+                    },
+                    "related_issues": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Related issue numbers",
+                        "example": [42, 123]
+                    },
+                    "merge_with": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Issue numbers to merge with (for close_merge action)",
+                        "example": [456]
+                    }
+                }
+            },
+            "meta": {
+                "type": "object",
+                "required": True,
+                "description": "Metadata about the recommendation",
+                "properties": {
+                    "reviewer": {
+                        "type": "string",
+                        "description": "Who made the recommendation",
+                        "default": "ai",
+                        "example": "claude-3.5"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "description": "ISO timestamp when recommendation was made",
+                        "format": "iso8601"
+                    },
+                    "model_version": {
+                        "type": "string",
+                        "description": "Model version used for analysis",
+                        "example": "claude-3.5-sonnet-20241022"
+                    },
+                    "review_id": {
+                        "type": "string",
+                        "description": "Unique identifier for this review",
+                        "format": "uuid"
+                    }
+                }
+            }
+        },
+        "example": {
+            "action": "close_merge",
+            "confidence": "high",
+            "summary": "Merge with #123 - same keyboard shortcut issue",
+            "rationale": "Both issues describe identical keyboard shortcut conflicts in notebook interface",
+            "report": "## Analysis\\n\\nBoth issues #456 and #123 report the same keyboard shortcut conflict...",
+            "analysis": {
+                "severity": "medium",
+                "frequency": "high",
+                "prevalence": "low",
+                "effort_estimate": "low",
+                "solution_risk": "low"
+            },
+            "context": {
+                "affected_packages": ["@jupyterlab/notebook"],
+                "affected_paths": ["packages/notebook/src/widget.ts"],
+                "affected_components": ["NotebookPanel"],
+                "related_issues": [789],
+                "merge_with": [123]
+            },
+            "meta": {
+                "reviewer": "ai",
+                "timestamp": "2024-01-15T10:30:00Z",
+                "model_version": "claude-3.5-sonnet",
+                "review_id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+        }
+    }
 
 
 @mcp.tool()

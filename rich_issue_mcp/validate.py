@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Validator to check database entries for completeness and consistency."""
 
-from typing import Any, Dict, List
 from collections import defaultdict
+from typing import Any
 
 from rich_issue_mcp.database import load_issues, save_issues
 
 
-def validate_required_fields(item: Dict[str, Any]) -> List[str]:
+def validate_required_fields(item: dict[str, Any]) -> list[str]:
     """Validate that an item has all required fields."""
     required_fields = {
         "number",
@@ -33,7 +33,7 @@ def validate_required_fields(item: Dict[str, Any]) -> List[str]:
     return missing_fields
 
 
-def validate_author_field(item: Dict[str, Any]) -> List[str]:
+def validate_author_field(item: dict[str, Any]) -> list[str]:
     """Validate author field structure."""
     issues = []
     author = item.get("author")
@@ -48,7 +48,7 @@ def validate_author_field(item: Dict[str, Any]) -> List[str]:
     return issues
 
 
-def validate_labels_field(item: Dict[str, Any]) -> List[str]:
+def validate_labels_field(item: dict[str, Any]) -> list[str]:
     """Validate labels field structure."""
     issues = []
     labels = item.get("labels", [])
@@ -69,7 +69,7 @@ def validate_labels_field(item: Dict[str, Any]) -> List[str]:
     return issues
 
 
-def validate_assignees_field(item: Dict[str, Any]) -> List[str]:
+def validate_assignees_field(item: dict[str, Any]) -> list[str]:
     """Validate assignees field structure."""
     issues = []
     assignees = item.get("assignees", [])
@@ -88,7 +88,7 @@ def validate_assignees_field(item: Dict[str, Any]) -> List[str]:
     return issues
 
 
-def validate_comments_field(item: Dict[str, Any]) -> List[str]:
+def validate_comments_field(item: dict[str, Any]) -> list[str]:
     """Validate comments field structure and count consistency."""
     issues = []
     comments = item.get("comments", [])
@@ -138,7 +138,7 @@ def validate_comments_field(item: Dict[str, Any]) -> List[str]:
     return issues
 
 
-def validate_cross_references_field(item: Dict[str, Any]) -> List[str]:
+def validate_cross_references_field(item: dict[str, Any]) -> list[str]:
     """Validate cross_references field structure."""
     issues = []
     cross_refs = item.get("cross_references", [])
@@ -160,7 +160,7 @@ def validate_cross_references_field(item: Dict[str, Any]) -> List[str]:
     return issues
 
 
-def validate_recommendations_field(item: Dict[str, Any]) -> List[str]:
+def validate_recommendations_field(item: dict[str, Any]) -> list[str]:
     """Validate recommendations field structure."""
     issues = []
     recommendations = item.get("recommendations", [])
@@ -194,7 +194,7 @@ def validate_recommendations_field(item: Dict[str, Any]) -> List[str]:
     return issues
 
 
-def validate_pr_specific_fields(item: Dict[str, Any]) -> List[str]:
+def validate_pr_specific_fields(item: dict[str, Any]) -> list[str]:
     """Validate PR-specific fields if item is a pull request."""
     issues = []
 
@@ -222,7 +222,7 @@ def validate_pr_specific_fields(item: Dict[str, Any]) -> List[str]:
     return issues
 
 
-def validate_item(item: Dict[str, Any]) -> Dict[str, List[str]]:
+def validate_item(item: dict[str, Any]) -> dict[str, list[str]]:
     """Validate a single database item and return all issues found."""
     validation_issues = {}
 
@@ -304,13 +304,13 @@ def validate_database(repo: str, delete_invalid: bool = False) -> bool:
             print(f"  ✓ Validated {i + 1}/{total_items} items...")
 
     # Report results
-    print(f"\n📋 Validation Results:")
+    print("\n📋 Validation Results:")
     print(f"  📊 Total items: {total_items}")
     print(f"  ✅ Items without issues: {total_items - items_with_issues}")
     print(f"  ⚠️  Items with issues: {items_with_issues}")
 
     if issue_counts:
-        print(f"\n📝 Issue breakdown:")
+        print("\n📝 Issue breakdown:")
         for category, count in sorted(issue_counts.items()):
             print(f"  {category}: {count} issues")
 
@@ -341,13 +341,13 @@ def validate_database(repo: str, delete_invalid: bool = False) -> bool:
 
     # Handle deletion of invalid entries if requested
     if delete_invalid and invalid_items:
-        print(f"\n🗑️  Delete invalid entries requested:")
+        print("\n🗑️  Delete invalid entries requested:")
         print(f"  📊 {len(valid_items)} valid items will be kept")
         print(f"  🗑️  {len(invalid_items)} invalid items will be deleted")
 
         # Show some examples of what will be deleted
         if invalid_items:
-            print(f"\n📝 Examples of items to be deleted:")
+            print("\n📝 Examples of items to be deleted:")
             for i, (item, issues) in enumerate(invalid_items[:5]):
                 item_number = item.get("number", f"item_{i}")
                 issue_summary = []

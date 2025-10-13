@@ -220,7 +220,6 @@ def get_issue_summary(
         "comment_emojis": issue.get("comment_emojis"),
         "comment_emojis_quartile": issue.get("comment_emojis_quartile"),
         "total_emojis": issue.get("total_emojis"),
-        "comment_emojis_quartile": issue.get("comment_emojis_quartile"),
         "total_emojis_quartile": issue.get("total_emojis_quartile"),
     }
 
@@ -258,7 +257,7 @@ def format_emoji_counts(reaction_groups: list[dict[str, Any]]) -> str:
     # Map GitHub reaction content to actual emoji symbols
     emoji_map = {
         "THUMBS_UP": "👍",
-        "THUMBS_DOWN": "👎", 
+        "THUMBS_DOWN": "👎",
         "LAUGH": "😄",
         "HOORAY": "🎉",
         "CONFUSED": "😕",

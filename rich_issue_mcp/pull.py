@@ -97,6 +97,8 @@ def make_rest_request(
     url: str, params: dict[str, Any] | None = None, max_retries: int = 5
 ) -> requests.Response:
     """Make a REST API request to GitHub with rate limit handling."""
+    import requests.exceptions
+
     token = get_github_token()
     headers = {
         "Authorization": f"token {token}",
@@ -105,7 +107,28 @@ def make_rest_request(
     }
 
     for attempt in range(max_retries):
-        response = requests.get(url, headers=headers, params=params)
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            print(f"⚠️  Network error on attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8 seconds
+                print(f"🔄 Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"❌ Failed after {max_retries} attempts, skipping this request")
+                raise
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️  Request error on attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                print(f"🔄 Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"❌ Failed after {max_retries} attempts, skipping this request")
+                raise
 
         # If successful, return immediately
         if response.status_code == 200:
@@ -275,7 +298,7 @@ def fetch_issues_page_graphql(
         query = f"""
         query($owner: String!, $name: String!, $cursor: String) {{
             repository(owner: $owner, name: $name) {{
-                issues(first: 100, after: $cursor, orderBy: {{field: CREATED_AT, direction: ASC}}, states: [{states_filter}]) {{
+                issues(first: 100, after: $cursor, orderBy: {{field: {order_by}, direction: ASC}}, states: [{states_filter}]) {{
                     pageInfo {{
                         hasNextPage
                         endCursor
@@ -321,7 +344,7 @@ def fetch_issues_page_graphql(
         query = f"""
         query($owner: String!, $name: String!, $cursor: String) {{
             repository(owner: $owner, name: $name) {{
-                pullRequests(first: 100, after: $cursor, orderBy: {{field: CREATED_AT, direction: ASC}}, states: [{states_filter}]) {{
+                pullRequests(first: 100, after: $cursor, orderBy: {{field: {order_by}, direction: ASC}}, states: [{states_filter}]) {{
                     pageInfo {{
                         hasNextPage
                         endCursor
@@ -454,13 +477,13 @@ def fetch_issues_page_graphql(
 
         # Look for missing PR 2525
         if first_num <= 2525 <= last_num:
-            print(f"  🎯 This page should contain PR #2525!")
+            print("  🎯 This page should contain PR #2525!")
             has_2525 = any(item["number"] == 2525 for item in items)
             print(f"  🎯 PR #2525 actually present: {has_2525}")
             if has_2525:
-                print(f"  ✅ Found PR #2525! Fix successful.")
+                print("  ✅ Found PR #2525! Fix successful.")
     else:
-        print(f"  🔢 No items returned from GraphQL")
+        print("  🔢 No items returned from GraphQL")
 
     return items, next_cursor, has_next_page
 
@@ -519,6 +542,8 @@ def fetch_all_comments(repo: str, issue_number: int) -> list[dict[str, Any]] | N
     Returns:
         List of comments if successful, None if failed to fetch
     """
+    import requests.exceptions
+
     all_comments = []
     page = 1
 
@@ -526,7 +551,14 @@ def fetch_all_comments(repo: str, issue_number: int) -> list[dict[str, Any]] | N
         comments_url = (
             f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
         )
-        response = make_rest_request(comments_url, {"per_page": 100, "page": page})
+
+        try:
+            response = make_rest_request(comments_url, {"per_page": 100, "page": page})
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
+            print(f"❌ Network error fetching comments for issue #{issue_number}: {e}")
+            print(f"⚠️  Skipping issue #{issue_number} - refusing incomplete data")
+            return None  # Return None to indicate failure - issue will be skipped
 
         if response.status_code != 200:
             print(
@@ -565,6 +597,8 @@ def fetch_all_timeline_cross_references(
     Returns:
         List of cross-references if successful, None if failed to fetch
     """
+    import requests.exceptions
+
     all_cross_references = []
     page = 1
 
@@ -572,7 +606,14 @@ def fetch_all_timeline_cross_references(
         timeline_url = (
             f"https://api.github.com/repos/{repo}/issues/{issue_number}/timeline"
         )
-        response = make_rest_request(timeline_url, {"per_page": 100, "page": page})
+
+        try:
+            response = make_rest_request(timeline_url, {"per_page": 100, "page": page})
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
+            print(f"❌ Network error fetching timeline for issue #{issue_number}: {e}")
+            print(f"⚠️  Skipping issue #{issue_number} - refusing incomplete data")
+            return None  # Return None to indicate failure - issue will be skipped
 
         if response.status_code != 200:
             print(
@@ -940,7 +981,7 @@ def fetch_issues(
 
     # Fetch issues if requested
     if item_types in ("issues", "both"):
-        print(f"\n🔍 Fetching issues...")
+        print("\n🔍 Fetching issues...")
         issues_processed = fetch_items_with_pagination(
             repo, "issues", include_closed, existing_numbers, coverage, mode
         )
@@ -952,7 +993,7 @@ def fetch_issues(
 
     # Fetch PRs if requested
     if item_types in ("prs", "both"):
-        print(f"\n🔍 Fetching pull requests...")
+        print("\n🔍 Fetching pull requests...")
         prs_processed = fetch_items_with_pagination(
             repo, "pull_requests", include_closed, existing_numbers, coverage, mode
         )
