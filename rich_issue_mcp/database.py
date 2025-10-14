@@ -6,6 +6,26 @@ from typing import Any
 
 from tinydb import Query, TinyDB
 from tinyrecord import transaction
+from BetterJSONStorage import BetterJSONStorage
+from blosc2 import compress
+from orjson import dumps
+
+
+class FixedBetterJSONStorage(BetterJSONStorage):
+    """BetterJSONStorage with fix for blosc2 typesize issue."""
+    
+    def _BetterJSONStorage__file_writer(self):
+        """Fixed file writer that uses typesize=None to avoid the compression error."""
+        self._shutdown_lock.acquire()
+        while self._running:
+            if self._changed:
+                self._changed = False
+                self._handle.seek(0)
+                self._handle.truncate()
+                # Fix: Use typesize=None to avoid the "multiple of typesize (8)" error
+                self._handle.write(compress(dumps(self._data, **self._dump_kwargs), typesize=None))
+                self._handle.flush()
+        self._shutdown_lock.release()
 
 from rich_issue_mcp.config import get_data_directory
 
@@ -21,7 +41,7 @@ def get_database(repo: str) -> TinyDB:
     """Get or create a TinyDB database for a repository."""
     db_path = get_database_path(repo)
     db_path.parent.mkdir(exist_ok=True)
-    return TinyDB(db_path)
+    return TinyDB(db_path, access_mode="r+", storage=FixedBetterJSONStorage)
 
 
 def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:

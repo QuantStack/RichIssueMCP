@@ -563,8 +563,8 @@ def get_recommendation_schema() -> dict[str, Any]:
                     "affected_paths": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "File paths affected",
-                        "example": ["packages/notebook/src/widget.ts"]
+                        "description": "Paths affected (files/directories), optionally with line numbers using GitHub syntax (path:line or path:start-end)",
+                        "example": ["packages/notebook/src/widget.ts:42", "packages/cells/src/model.ts:123-145", "src/main.ts", "packages/notebook/"]
                     },
                     "affected_components": {
                         "type": "array",
@@ -630,7 +630,7 @@ def get_recommendation_schema() -> dict[str, Any]:
             },
             "context": {
                 "affected_packages": ["@jupyterlab/notebook"],
-                "affected_paths": ["packages/notebook/src/widget.ts"],
+                "affected_paths": ["packages/notebook/src/widget.ts:142-156", "packages/notebook/src/panel.ts:89"],
                 "affected_components": ["NotebookPanel"],
                 "related_issues": [789],
                 "merge_with": [123]
