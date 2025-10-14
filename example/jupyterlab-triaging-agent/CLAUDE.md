@@ -132,7 +132,7 @@ Use the Deepwiki mcp if available to ask about this issue
 - **Medium**: Weekly/monthly
 - **Low**: Rare or specific use cases only
 
-**Fraction** (what portion of user base is affected?):
+**Prevalence** (what portion of user base is affected?):
 - **High**: Most JupyterLab users encounter this
 - **Medium**: Significant subset (intermediate/advanced users)
 - **Low**: Small subset or specific user groups
@@ -145,14 +145,19 @@ Evaluate using JupyterLab architecture knowledge:
 - Solution complexity and potential side effects/risks
 - Alignment with existing patterns and architectural decisions
 
-Use the deepwiki mcp as well to answer these (only ask a single question).
+Use the deepwiki mcp if available to answer these in addition to your own
+research (only ask a single question).
 
 ### 4. Final Recommendation
 
-- **prioritize**: High-impact, well-defined issues with clear user benefit
-- **neutral**: Legitimate improvements that can be addressed when resources permit
-- **deprioritize**: Low-impact or already partially addressed through alternatives
-- **close**: No longer relevant, duplicate, or out of scope
+- **priority_high**: Critical issue needing immediate attention
+- **priority_medium**: Important issue for next sprint/release  
+- **priority_low**: Valid issue but lower priority
+- **close_completed**: Issue has been completed/fixed
+- **close_merge**: Issue should be merged with another issue
+- **close_not_planned**: Valid issue but not aligned with roadmap
+- **close_invalid**: Invalid issue (spam, off-topic, etc.)
+- **needs_more_info**: Requires additional details from reporter
 
 ### 5. Update Issue Database
 
@@ -195,28 +200,38 @@ mcp__rich_issue_mcp__add_recommendation
 
 **Affected Components:**
 - **Packages**: {List packages or "None"}
-- **Files**: {List file paths or directory paths, use #<path> for new files or "None"}
-- **Objects**: {List functions/classes or "None"}
+- **Paths**: {List file paths or directory paths, optionally with line numbers using GitHub syntax (path:line or path:start-end) or "None"}
+- **Components**: {List UI/system components or "None"}
 
-## Historical Context
-{Any relevant historical information, similar issues, community engagement}
+## Context
+{Any relevant information, similar issues, community engagement}
 
-## Final Recommendation: **{CLOSE/DEPRIORITIZE/KEEP/PRIORITIZE}**
+## Final Recommendation: **{recommendation_value}**
 
 **Rationale**: {Detailed explanation of the recommendation decision}
 ```
 
 Required parameters:
-- `issue_number` - GitHub issue number
+- `issue_number` - GitHub issue number (integer)
+- `recommendation` - Final decision: "close_completed", "close_merge", "close_not_planned", "close_invalid", "priority_high", "priority_medium", "priority_low", "needs_more_info"
+- `confidence` - Confidence level: "low", "medium", "high"
+- `summary` - Brief one-line summary of the recommendation (string)
+- `rationale` - Short explanation for why this action is recommended (string)
+- `report` - Use the structured markdown format above (string)
 - `severity` - Assessment: "low", "medium", "high"
 - `frequency` - Assessment: "low", "medium", "high"  
 - `prevalence` - Assessment: "low", "medium", "high"
-- `recommendation` - Final decision: "close", "deprioritize", "keep", "prioritize"
-- `report` - Use the structured markdown format above
 - `solution_complexity` - Implementation effort: "low", "medium", "high"
 - `solution_risk` - Implementation risk: "low", "medium", "high"
-- `affected_packages` - List of package names (max 2) that would need modification
-- `affected_files` - List of file or directory paths (max 4), use #<path> for new files
-- `affected_objects` - List of function or class names (max 4) that would be modified
+- `affected_packages` - List of package names that would need modification (list of strings)
+- `affected_paths` - List of file or directory paths, optionally with line numbers using GitHub syntax (list of strings)
+- `affected_components` - List of UI/system components that would be affected (list of strings)
+- `related_issues` - List of related issue numbers (list of integers)
+- `merge_with` - List of issue numbers to merge with (for close_merge recommendation) (list of integers)
+
+Optional parameters:
+- `reviewer` - Who made the recommendation (string, defaults to "ai")
+- `model_version` - Model version used for analysis (string)
+- `repo` - Repository name (string, defaults to "jupyterlab/jupyterlab")
 
 This workflow ensures consistent, thorough evaluation of each issue while leveraging both quantitative metrics and qualitative JupyterLab expertise.

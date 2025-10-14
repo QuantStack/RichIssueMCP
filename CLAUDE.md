@@ -131,7 +131,7 @@ RichIssueMCP/
 │   ├── visualize.py         # Data visualization tools
 │   └── tui.py               # Text user interface components
 ├── data/                    # Data storage directory
-│   └── issues-{repo}.json   # TinyDB database files (e.g., issues-jupyterlab-jupyterlab.json)
+│   └── issues-{repo}.db     # TinyDB database files (e.g., issues-jupyterlab-jupyterlab.db)
 ├── dcache/                  # Diskcache directory for API response caching
 ├── example/                 # Example implementations and agents
 ├── config.toml              # Configuration file (API keys, settings)

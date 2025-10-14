@@ -436,6 +436,7 @@ def fetch_issues_page_graphql(
             ],
             "reactionGroups": node.get("reactionGroups", []),
             "item_type": type_name,
+            "pulled_date": datetime.now().isoformat(),
         }
 
         # Add PR-specific fields
@@ -698,6 +699,7 @@ def process_and_save_issue(repo: str, issue: dict[str, Any]) -> dict[str, Any] |
         "number_of_comments": len(comments_list),
         "reactionGroups": issue.get("reactionGroups", []),
         "cross_references": cross_references,
+        "pulled_date": datetime.now().isoformat(),
     }
 
     # Save immediately to database
@@ -764,6 +766,168 @@ def fetch_specific_issues(repo: str, issue_numbers: list[int]) -> list[dict[str,
             processed_issues.append(processed_issue)
 
     return processed_issues
+
+
+def fetch_items_with_rest_since(
+    repo: str,
+    item_type: str,
+    include_closed: bool,
+    since: datetime,
+) -> tuple[int, int, int]:
+    """Fetch items using REST API with since parameter for efficient updates.
+    
+    Args:
+        repo: GitHub repository in owner/repo format
+        item_type: Either 'issues' or 'pull_requests'
+        include_closed: Whether to include closed items
+        since: Datetime to fetch items updated since
+        
+    Returns:
+        Tuple of (processed_count, comments_count, cross_refs_count)
+    """
+    if item_type == "pull_requests":
+        api_url = f"https://api.github.com/repos/{repo}/pulls"
+        type_name = "PRs"
+    else:
+        api_url = f"https://api.github.com/repos/{repo}/issues"
+        type_name = "issues"
+    
+    # Convert since datetime to ISO string format required by GitHub API
+    since_str = since.isoformat().replace("+00:00", "Z")
+    print(f"🕐 Fetching {type_name} updated since: {since.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    
+    state = "all" if include_closed else "open"
+    page = 1
+    total_processed = 0
+    total_comments = 0
+    total_cross_refs = 0
+    
+    while True:
+        print(f"\n🔍 Fetching {type_name} page {page} (REST API with since)...")
+        
+        params = {
+            "state": state,
+            "sort": "updated",
+            "direction": "asc",
+            "since": since_str,
+            "per_page": 100,
+            "page": page
+        }
+        
+        try:
+            response = make_rest_request(api_url, params)
+        except Exception as e:
+            print(f"❌ Failed to fetch {type_name} page {page}: {e}")
+            break
+            
+        if response.status_code != 200:
+            print(f"❌ REST API failed: {response.status_code} - {response.text}")
+            break
+        
+        items = response.json()
+        
+        if not items:
+            print(f"✅ No more {type_name} found - fetch complete")
+            break
+        
+        # GitHub Issues API returns both issues and PRs - process both
+        # Separate them by checking for pull_request field
+        issues_from_api = [item for item in items if "pull_request" not in item]
+        prs_from_api = [item for item in items if "pull_request" in item]
+        
+        # Convert both issues and PRs to same schema as GraphQL for compatibility
+        page_items = []
+        
+        # Process issues
+        for item in issues_from_api:
+            converted_item = {
+                "number": item["number"],
+                "title": item["title"],
+                "body": item["body"],
+                "state": item["state"],  # REST API already lowercase
+                "created_at": item["created_at"],
+                "updated_at": item["updated_at"],
+                "html_url": item["html_url"],
+                "user": {"login": item["user"]["login"] if item["user"] else "ghost"},
+                "labels": [
+                    {"name": label["name"], "color": label["color"]}
+                    for label in item.get("labels", [])
+                ],
+                "assignees": [
+                    {"login": assignee["login"]} for assignee in item.get("assignees", [])
+                ],
+                "reactionGroups": [],  # Not available in REST API
+                "item_type": "issue",
+                "pulled_date": datetime.now().isoformat(),
+            }
+            page_items.append(converted_item)
+        
+        # Process PRs
+        for item in prs_from_api:
+            converted_item = {
+                "number": item["number"],
+                "title": item["title"],
+                "body": item["body"],
+                "state": item["state"],  # REST API already lowercase
+                "created_at": item["created_at"],
+                "updated_at": item["updated_at"],
+                "html_url": item["html_url"],
+                "user": {"login": item["user"]["login"] if item["user"] else "ghost"},
+                "labels": [
+                    {"name": label["name"], "color": label["color"]}
+                    for label in item.get("labels", [])
+                ],
+                "assignees": [
+                    {"login": assignee["login"]} for assignee in item.get("assignees", [])
+                ],
+                "reactionGroups": [],  # Not available in REST API
+                "item_type": "pull_request",
+                # Add PR-specific fields
+                "mergeable": item.get("mergeable"),
+                "merged": item.get("merged", False),
+                "merged_at": item.get("merged_at"),  # REST uses snake_case
+                "base_ref": item.get("base", {}).get("ref"),
+                "head_ref": item.get("head", {}).get("ref"),
+                "pulled_date": datetime.now().isoformat(),
+            }
+            page_items.append(converted_item)
+        
+        if not page_items:
+            print(f"✅ No {type_name} remaining after filtering - fetch complete")
+            break
+        
+        issues_count = len(issues_from_api)
+        prs_count = len(prs_from_api)
+        print(f"📄 REST API fetched page {page}: {issues_count} issues, {prs_count} PRs ({len(page_items)} total)")
+        
+        if page_items:
+            first_num = page_items[0]["number"]
+            last_num = page_items[-1]["number"]
+            print(f"  🔢 Item range on this page: #{first_num} to #{last_num}")
+        
+        # Process the items (fetch comments and cross-references)
+        print(f"🔧 Processing page {page} ({len(page_items)} items: {issues_count} issues, {prs_count} PRs)...")
+        processed_items = process_page_issues(repo, page_items)
+        
+        # Count stats
+        page_comments = sum(len(item["comments"]) for item in processed_items)
+        page_cross_refs = sum(len(item["cross_references"]) for item in processed_items)
+        
+        total_processed += len(processed_items)
+        total_comments += page_comments
+        total_cross_refs += page_cross_refs
+        
+        print(f"  📊 Page stats: {page_comments} comments, {page_cross_refs} cross-refs")
+        
+        # Check if there are more pages by looking at the Link header
+        link_header = response.headers.get("Link", "")
+        if 'rel="next"' not in link_header:
+            print(f"✅ No more {type_name} pages - fetch complete")
+            break
+        
+        page += 1
+    
+    return total_processed, total_comments, total_cross_refs
 
 
 def fetch_items_with_pagination(
@@ -979,29 +1143,83 @@ def fetch_issues(
     total_comments = 0
     total_cross_refs = 0
 
-    # Fetch issues if requested
-    if item_types in ("issues", "both"):
-        print("\n🔍 Fetching issues...")
-        issues_processed = fetch_items_with_pagination(
-            repo, "issues", include_closed, existing_numbers, coverage, mode
-        )
-        total_processed += issues_processed[0]
-        total_comments += issues_processed[1]
-        total_cross_refs += issues_processed[2]
-    else:
-        print(f"\n⏭️  Skipping issues (item_types={item_types})")
+    # Determine which API to use based on mode
+    if mode == "update":
+        # UPDATE MODE: Use REST API with since parameter for efficiency
+        if refetch and start_datetime:
+            since_date = start_datetime
+        else:
+            since_date = get_last_updated_date(repo)
+            # Add 1-week overlap before last updatedAt to ensure coverage
+            if since_date:
+                since_date = since_date - timedelta(weeks=1)
+                print(f"📅 Added 1-week overlap before last updated date for comprehensive coverage")
+        
+        if since_date:
+            print(f"🚀 UPDATE mode: Using REST API with since parameter")
+            
+            # GitHub Issues API returns both issues and PRs, so fetch once
+            print(f"\n🔍 Fetching issues and pull requests together (Issues API returns both)...")
+            items_processed = fetch_items_with_rest_since(
+                repo, "issues", include_closed, since_date
+            )
+            total_processed += items_processed[0]
+            total_comments += items_processed[1]
+            total_cross_refs += items_processed[2]
+        else:
+            print(f"⚠️  UPDATE mode: No since date available, falling back to GraphQL (fetch all)")
+            # Fall back to GraphQL pagination without existing_numbers filtering for update mode
+            if item_types in ("issues", "both"):
+                print("\n🔍 Fetching issues...")
+                issues_processed = fetch_items_with_pagination(
+                    repo, "issues", include_closed, set(), coverage, mode
+                )
+                total_processed += issues_processed[0]
+                total_comments += issues_processed[1]
+                total_cross_refs += issues_processed[2]
+            else:
+                print(f"\n⏭️  Skipping issues (item_types={item_types})")
 
-    # Fetch PRs if requested
-    if item_types in ("prs", "both"):
-        print("\n🔍 Fetching pull requests...")
-        prs_processed = fetch_items_with_pagination(
-            repo, "pull_requests", include_closed, existing_numbers, coverage, mode
-        )
-        total_processed += prs_processed[0]
-        total_comments += prs_processed[1]
-        total_cross_refs += prs_processed[2]
+            if item_types in ("prs", "both"):
+                print("\n🔍 Fetching pull requests...")
+                prs_processed = fetch_items_with_pagination(
+                    repo, "pull_requests", include_closed, set(), coverage, mode
+                )
+                total_processed += prs_processed[0]
+                total_comments += prs_processed[1]
+                total_cross_refs += prs_processed[2]
+            else:
+                print(f"\n⏭️  Skipping pull requests (item_types={item_types})")
     else:
-        print(f"\n⏭️  Skipping pull requests (item_types={item_types})")
+        # CREATE/REFETCH MODE: Use GraphQL pagination (fetch all issues)
+        print(f"🚀 {mode.upper()} mode: Using GraphQL pagination")
+        
+        # For create mode, filter existing issues; for refetch mode, don't filter
+        filter_existing = existing_numbers if mode == "create" else set()
+        
+        # Fetch issues if requested
+        if item_types in ("issues", "both"):
+            print("\n🔍 Fetching issues...")
+            issues_processed = fetch_items_with_pagination(
+                repo, "issues", include_closed, filter_existing, coverage, mode
+            )
+            total_processed += issues_processed[0]
+            total_comments += issues_processed[1]
+            total_cross_refs += issues_processed[2]
+        else:
+            print(f"\n⏭️  Skipping issues (item_types={item_types})")
+
+        # Fetch PRs if requested
+        if item_types in ("prs", "both"):
+            print("\n🔍 Fetching pull requests...")
+            prs_processed = fetch_items_with_pagination(
+                repo, "pull_requests", include_closed, filter_existing, coverage, mode
+            )
+            total_processed += prs_processed[0]
+            total_comments += prs_processed[1]
+            total_cross_refs += prs_processed[2]
+        else:
+            print(f"\n⏭️  Skipping pull requests (item_types={item_types})")
 
     # Load final results
     try:

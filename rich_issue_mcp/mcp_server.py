@@ -307,7 +307,7 @@ def export_all_open_issues(
 @mcp.tool()
 def add_recommendation(
     issue_number: int,
-    action: str,
+    recommendation: str,
     confidence: str,
     summary: str,
     rationale: str,
@@ -315,7 +315,7 @@ def add_recommendation(
     severity: str,
     frequency: str,
     prevalence: str,
-    effort_estimate: str,
+    solution_complexity: str,
     solution_risk: str,
     affected_packages: list[str],
     affected_paths: list[str],
@@ -330,14 +330,14 @@ def add_recommendation(
 
     # Validate input parameters
     valid_levels = {"low", "medium", "high"}
-    valid_actions = {
+    valid_recommendations = {
         "close_completed", "close_merge", "close_not_planned", "close_invalid",
-        "prioritize_high", "prioritize_medium", "prioritize_low", "needs_more_info"
+        "priority_high", "priority_medium", "priority_low", "needs_more_info"
     }
 
     errors = []
-    if action not in valid_actions:
-        errors.append(f"action must be one of: {', '.join(sorted(valid_actions))}")
+    if recommendation not in valid_recommendations:
+        errors.append(f"recommendation must be one of: {', '.join(sorted(valid_recommendations))}")
     if confidence not in valid_levels:
         errors.append(f"confidence must be one of: {', '.join(sorted(valid_levels))}")
     if severity not in valid_levels:
@@ -346,8 +346,8 @@ def add_recommendation(
         errors.append(f"frequency must be one of: {', '.join(sorted(valid_levels))}")
     if prevalence not in valid_levels:
         errors.append(f"prevalence must be one of: {', '.join(sorted(valid_levels))}")
-    if effort_estimate not in valid_levels:
-        errors.append(f"effort_estimate must be one of: {', '.join(sorted(valid_levels))}")
+    if solution_complexity not in valid_levels:
+        errors.append(f"solution_complexity must be one of: {', '.join(sorted(valid_levels))}")
     if solution_risk not in valid_levels:
         errors.append(f"solution_risk must be one of: {', '.join(sorted(valid_levels))}")
 
@@ -405,7 +405,7 @@ def add_recommendation(
 
     # Create new recommendation with enhanced schema
     new_recommendation = {
-        "action": action,
+        "recommendation": recommendation,
         "confidence": confidence,
         "summary": summary.strip(),
         "rationale": rationale.strip(),
@@ -414,7 +414,7 @@ def add_recommendation(
             "severity": severity,
             "frequency": frequency,
             "prevalence": prevalence,
-            "effort_estimate": effort_estimate,
+            "solution_complexity": solution_complexity,
             "solution_risk": solution_risk,
         },
         "context": {
@@ -463,7 +463,7 @@ def get_recommendation_schema() -> dict[str, Any]:
         "schema_version": "1.0",
         "description": "Enhanced schema for issue recommendations with structured analysis",
         "fields": {
-            "action": {
+            "recommendation": {
                 "type": "string",
                 "required": True,
                 "description": "The recommended action to take on the issue",
@@ -472,9 +472,9 @@ def get_recommendation_schema() -> dict[str, Any]:
                     "close_merge",
                     "close_not_planned",
                     "close_invalid",
-                    "prioritize_high",
-                    "prioritize_medium",
-                    "prioritize_low",
+                    "priority_high",
+                    "priority_medium",
+                    "priority_low",
                     "needs_more_info"
                 ],
                 "enum_descriptions": {
@@ -482,9 +482,9 @@ def get_recommendation_schema() -> dict[str, Any]:
                     "close_merge": "Issue should be merged with another issue",
                     "close_not_planned": "Valid issue but not aligned with roadmap",
                     "close_invalid": "Invalid issue (spam, off-topic, etc.)",
-                    "prioritize_high": "Critical issue needing immediate attention",
-                    "prioritize_medium": "Important issue for next sprint/release",
-                    "prioritize_low": "Valid issue but lower priority",
+                    "priority_high": "Critical issue needing immediate attention",
+                    "priority_medium": "Important issue for next sprint/release",
+                    "priority_low": "Valid issue but lower priority",
                     "needs_more_info": "Requires additional details from reporter"
                 }
             },
@@ -535,7 +535,7 @@ def get_recommendation_schema() -> dict[str, Any]:
                         "description": "How many users are affected",
                         "enum": ["low", "medium", "high"]
                     },
-                    "effort_estimate": {
+                    "solution_complexity": {
                         "type": "string",
                         "required": True,
                         "description": "Estimated development effort required",
@@ -616,7 +616,7 @@ def get_recommendation_schema() -> dict[str, Any]:
             }
         },
         "example": {
-            "action": "close_merge",
+            "recommendation": "close_merge",
             "confidence": "high",
             "summary": "Merge with #123 - same keyboard shortcut issue",
             "rationale": "Both issues describe identical keyboard shortcut conflicts in notebook interface",
@@ -625,7 +625,7 @@ def get_recommendation_schema() -> dict[str, Any]:
                 "severity": "medium",
                 "frequency": "high",
                 "prevalence": "low",
-                "effort_estimate": "low",
+                "solution_complexity": "low",
                 "solution_risk": "low"
             },
             "context": {
@@ -726,8 +726,9 @@ def get_issue_by_difficulty(
 
         # Get the latest recommendation's complexity and risk
         latest_rec = recommendations[-1]  # Most recent recommendation
-        complexity = latest_rec.get("solution_complexity", "").lower()
-        risk = latest_rec.get("solution_risk", "").lower()
+        analysis = latest_rec.get("analysis", {})
+        complexity = analysis.get("solution_complexity", "").lower()
+        risk = analysis.get("solution_risk", "").lower()
 
         # Categorize based on complexity and risk
         issue_difficulty = None
@@ -770,10 +771,10 @@ def get_issue_by_difficulty(
         "engagement_score": best_issue_data["engagement_score"],
         "issue_emojis": issue.get("issue_total_emojis", 0),
         "conversation_emojis": issue.get("conversation_total_emojis", 0),
-        "solution_complexity": best_issue_data["latest_recommendation"].get(
+        "solution_complexity": best_issue_data["latest_recommendation"].get("analysis", {}).get(
             "solution_complexity"
         ),
-        "solution_risk": best_issue_data["latest_recommendation"].get("solution_risk"),
+        "solution_risk": best_issue_data["latest_recommendation"].get("analysis", {}).get("solution_risk"),
         "recommendation": best_issue_data["latest_recommendation"].get(
             "recommendation"
         ),

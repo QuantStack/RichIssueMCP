@@ -29,25 +29,36 @@ class FixedBetterJSONStorage(BetterJSONStorage):
 
 from rich_issue_mcp.config import get_data_directory
 
+# Global cache for database instances to prevent BetterJSONStorage conflicts
+_database_cache: dict[str, TinyDB] = {}
+
 
 def get_database_path(repo: str) -> Path:
     """Get the TinyDB database path for a repository."""
     data_dir = get_data_directory()
     repo_name = repo.replace("/", "-")
-    return data_dir / f"issues-{repo_name}.json"
+    return data_dir / f"issues-{repo_name}.db"
 
 
 def get_database(repo: str) -> TinyDB:
     """Get or create a TinyDB database for a repository."""
+    # Use cached instance if available
+    if repo in _database_cache:
+        return _database_cache[repo]
+    
     db_path = get_database_path(repo)
     db_path.parent.mkdir(exist_ok=True)
-    return TinyDB(db_path, access_mode="r+", storage=FixedBetterJSONStorage)
+    db = TinyDB(db_path, access_mode="r+", storage=FixedBetterJSONStorage)
+    
+    # Cache the database instance
+    _database_cache[repo] = db
+    return db
 
 
 def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
     """Save issues to TinyDB database using TinyRecord for transaction safety."""
     # Validate repo parameter to prevent incorrect file naming
-    if ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
+    if ".db" in repo or ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
         raise ValueError(
             f"Invalid repo name '{repo}': should be 'owner/repo', not a file path"
         )
@@ -65,7 +76,7 @@ def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
 def load_issues(repo: str) -> list[dict[str, Any]]:
     """Load all issues from TinyDB database."""
     # Validate repo parameter to prevent incorrect file naming
-    if ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
+    if ".db" in repo or ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
         raise ValueError(
             f"Invalid repo name '{repo}': should be 'owner/repo', not a file path"
         )
@@ -77,7 +88,7 @@ def load_issues(repo: str) -> list[dict[str, Any]]:
 def upsert_issues(repo: str, issues: list[dict[str, Any]]) -> None:
     """Upsert issues to TinyDB database (update existing, insert new)."""
     # Validate repo parameter to prevent incorrect file naming
-    if ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
+    if ".db" in repo or ".json" in repo or ".gz" in repo or "issues-" in repo or "enriched-" in repo:
         raise ValueError(
             f"Invalid repo name '{repo}': should be 'owner/repo', not a file path"
         )
