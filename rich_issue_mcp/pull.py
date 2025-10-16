@@ -791,20 +791,20 @@ def fetch_items_with_rest_since(
     else:
         api_url = f"https://api.github.com/repos/{repo}/issues"
         type_name = "issues"
-    
+
     # Convert since datetime to ISO string format required by GitHub API
     since_str = since.isoformat().replace("+00:00", "Z")
     print(f"🕐 Fetching {type_name} updated since: {since.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    
+
     state = "all" if include_closed else "open"
     page = 1
     total_processed = 0
     total_comments = 0
     total_cross_refs = 0
-    
+
     while True:
         print(f"\n🔍 Fetching {type_name} page {page} (REST API with since)...")
-        
+
         params = {
             "state": state,
             "sort": "updated",
@@ -813,31 +813,31 @@ def fetch_items_with_rest_since(
             "per_page": 100,
             "page": page
         }
-        
+
         try:
             response = make_rest_request(api_url, params)
         except Exception as e:
             print(f"❌ Failed to fetch {type_name} page {page}: {e}")
             break
-            
+
         if response.status_code != 200:
             print(f"❌ REST API failed: {response.status_code} - {response.text}")
             break
-        
+
         items = response.json()
-        
+
         if not items:
             print(f"✅ No more {type_name} found - fetch complete")
             break
-        
+
         # GitHub Issues API returns both issues and PRs - process both
         # Separate them by checking for pull_request field
         issues_from_api = [item for item in items if "pull_request" not in item]
         prs_from_api = [item for item in items if "pull_request" in item]
-        
+
         # Convert both issues and PRs to same schema as GraphQL for compatibility
         page_items = []
-        
+
         # Process issues
         for item in issues_from_api:
             converted_item = {
@@ -861,7 +861,7 @@ def fetch_items_with_rest_since(
                 "pulled_date": datetime.now().isoformat(),
             }
             page_items.append(converted_item)
-        
+
         # Process PRs
         for item in prs_from_api:
             converted_item = {
@@ -891,42 +891,42 @@ def fetch_items_with_rest_since(
                 "pulled_date": datetime.now().isoformat(),
             }
             page_items.append(converted_item)
-        
+
         if not page_items:
             print(f"✅ No {type_name} remaining after filtering - fetch complete")
             break
-        
+
         issues_count = len(issues_from_api)
         prs_count = len(prs_from_api)
         print(f"📄 REST API fetched page {page}: {issues_count} issues, {prs_count} PRs ({len(page_items)} total)")
-        
+
         if page_items:
             first_num = page_items[0]["number"]
             last_num = page_items[-1]["number"]
             print(f"  🔢 Item range on this page: #{first_num} to #{last_num}")
-        
+
         # Process the items (fetch comments and cross-references)
         print(f"🔧 Processing page {page} ({len(page_items)} items: {issues_count} issues, {prs_count} PRs)...")
         processed_items = process_page_issues(repo, page_items)
-        
+
         # Count stats
         page_comments = sum(len(item["comments"]) for item in processed_items)
         page_cross_refs = sum(len(item["cross_references"]) for item in processed_items)
-        
+
         total_processed += len(processed_items)
         total_comments += page_comments
         total_cross_refs += page_cross_refs
-        
+
         print(f"  📊 Page stats: {page_comments} comments, {page_cross_refs} cross-refs")
-        
+
         # Check if there are more pages by looking at the Link header
         link_header = response.headers.get("Link", "")
         if 'rel="next"' not in link_header:
             print(f"✅ No more {type_name} pages - fetch complete")
             break
-        
+
         page += 1
-    
+
     return total_processed, total_comments, total_cross_refs
 
 
@@ -1153,13 +1153,13 @@ def fetch_issues(
             # Add 1-week overlap before last updatedAt to ensure coverage
             if since_date:
                 since_date = since_date - timedelta(weeks=1)
-                print(f"📅 Added 1-week overlap before last updated date for comprehensive coverage")
-        
+                print("📅 Added 1-week overlap before last updated date for comprehensive coverage")
+
         if since_date:
-            print(f"🚀 UPDATE mode: Using REST API with since parameter")
-            
+            print("🚀 UPDATE mode: Using REST API with since parameter")
+
             # GitHub Issues API returns both issues and PRs, so fetch once
-            print(f"\n🔍 Fetching issues and pull requests together (Issues API returns both)...")
+            print("\n🔍 Fetching issues and pull requests together (Issues API returns both)...")
             items_processed = fetch_items_with_rest_since(
                 repo, "issues", include_closed, since_date
             )
@@ -1167,7 +1167,7 @@ def fetch_issues(
             total_comments += items_processed[1]
             total_cross_refs += items_processed[2]
         else:
-            print(f"⚠️  UPDATE mode: No since date available, falling back to GraphQL (fetch all)")
+            print("⚠️  UPDATE mode: No since date available, falling back to GraphQL (fetch all)")
             # Fall back to GraphQL pagination without existing_numbers filtering for update mode
             if item_types in ("issues", "both"):
                 print("\n🔍 Fetching issues...")
@@ -1193,10 +1193,10 @@ def fetch_issues(
     else:
         # CREATE/REFETCH MODE: Use GraphQL pagination (fetch all issues)
         print(f"🚀 {mode.upper()} mode: Using GraphQL pagination")
-        
+
         # For create mode, filter existing issues; for refetch mode, don't filter
         filter_existing = existing_numbers if mode == "create" else set()
-        
+
         # Fetch issues if requested
         if item_types in ("issues", "both"):
             print("\n🔍 Fetching issues...")

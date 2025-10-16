@@ -10,7 +10,7 @@ from rich_issue_mcp.enrich import (
     add_quartile_columns,
     add_summaries,
     enrich_issue,
-    perform_hierarchical_clustering,
+    perform_hdbscan_clustering,
     print_stats,
 )
 from rich_issue_mcp.mcp_server import run_mcp_server
@@ -68,8 +68,8 @@ def cmd_enrich(args) -> None:
     print("🔧 Computing k-4 nearest neighbor distances...")
     enriched = add_k4_distances(enriched)
 
-    print("🔍 Performing hierarchical clustering...")
-    enriched = perform_hierarchical_clustering(enriched, api_key)
+    print("🔍 Performing HDBSCAN clustering...")
+    enriched = perform_hdbscan_clustering(enriched, api_key)
 
     save_issues(args.repo, enriched)
     print("✅ Enriched issue database saved to TinyDB")
@@ -83,33 +83,48 @@ def cmd_mcp(args) -> None:
 
 def cmd_visualize(args) -> None:
     """Execute visualize command."""
-    repo = args.repo or "jupyterlab/jupyterlab"
-    print(f"📊 Visualizing repository: {repo}")
+    print(f"📊 Visualizing repository: {args.repo}")
 
-    visualize_issues(repo, args.output, scale=args.scale)
+    visualize_issues(args.repo, args.output, scale=args.scale)
 
 
 def cmd_clean(args) -> None:
     """Execute clean command to remove downloaded data."""
-    data_dir = get_data_directory()
+    from rich_issue_mcp.database import get_database_path
 
-    if not data_dir.exists():
-        print("📁 No data directory found")
-        return
+    if hasattr(args, 'repo') and args.repo:
+        # Clean specific repository
+        repo = args.repo
+        db_path = get_database_path(repo)
 
-    # Find data files (TinyDB database files)
-    patterns = ["issues-*.json"]
-    files_to_delete = []
+        if not db_path.exists():
+            print(f"📁 No database file found for {repo}")
+            return
 
-    for pattern in patterns:
-        files_to_delete.extend(data_dir.glob(pattern))
+        files_to_delete = [db_path]
+        print(f"🗑️  Database file for {repo}:")
+    else:
+        # Clean all repositories
+        data_dir = get_data_directory()
 
-    if not files_to_delete:
-        print("📁 No data files found to clean")
-        return
+        if not data_dir.exists():
+            print("📁 No data directory found")
+            return
+
+        # Find data files (TinyDB database files)
+        patterns = ["issues-*.db"]
+        files_to_delete = []
+
+        for pattern in patterns:
+            files_to_delete.extend(data_dir.glob(pattern))
+
+        if not files_to_delete:
+            print("📁 No data files found to clean")
+            return
+
+        print("🗑️  Files to be deleted:")
 
     # Show files that would be deleted
-    print("🗑️  Files to be deleted:")
     for file_path in sorted(files_to_delete):
         file_size = file_path.stat().st_size
         if file_size > 1024 * 1024:
@@ -137,14 +152,16 @@ def cmd_clean(args) -> None:
         except OSError as e:
             print(f"❌ Failed to delete {file_path}: {e}")
 
-    print(f"✅ Cleaned {deleted_count} files from {data_dir}")
+    if hasattr(args, 'repo') and args.repo:
+        print(f"✅ Cleaned database for {args.repo}")
+    else:
+        print(f"✅ Cleaned {deleted_count} files from {get_data_directory()}")
 
 
 def cmd_validate(args) -> None:
     """Execute validate command to check database integrity."""
-    repo = args.repo or "jupyterlab/jupyterlab"
     success = validate_database(
-        repo, delete_invalid=getattr(args, "delete_invalid", False)
+        args.repo, delete_invalid=getattr(args, "delete_invalid", False)
     )
     if not success:
         exit(1)
@@ -154,9 +171,8 @@ def cmd_tui(args) -> None:
     """Execute TUI command to browse database interactively."""
     from rich_issue_mcp.tui import run_tui
 
-    repo = args.repo or "jupyterlab/jupyterlab"
     try:
-        run_tui(repo)
+        run_tui(args.repo)
     except KeyboardInterrupt:
         print("\nTUI exited by user")
     except Exception as e:
@@ -173,7 +189,7 @@ def main() -> None:
     # Pull command
     pull_parser = subparsers.add_parser("pull", help="Pull raw issues from GitHub")
     pull_parser.add_argument(
-        "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to analyze"
+        "repo", help="Repository to analyze (e.g., 'owner/repo')"
     )
     pull_parser.add_argument(
         "--exclude-closed",
@@ -229,11 +245,11 @@ def main() -> None:
 
     # MCP command
     mcp_parser = subparsers.add_parser("mcp", help="Start MCP server")
+    mcp_parser.add_argument(
+        "repo", help="Repository to serve (e.g., 'owner/repo')"
+    )
     mcp_parser.add_argument("--host", default="localhost", help="Host to bind to")
     mcp_parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
-    mcp_parser.add_argument(
-        "--repo", help="Repository name (defaults to jupyterlab/jupyterlab)"
-    )
     mcp_parser.set_defaults(func=cmd_mcp)
 
     # Visualize command
@@ -242,8 +258,7 @@ def main() -> None:
         help="Create T-SNE visualization and GraphML network from enriched issues in TinyDB",
     )
     visualize_parser.add_argument(
-        "--repo",
-        help="Repository name (e.g., 'owner/repo') to load from TinyDB (default: jupyterlab/jupyterlab)",
+        "repo", help="Repository to visualize (e.g., 'owner/repo')"
     )
     visualize_parser.add_argument(
         "--output",
@@ -260,6 +275,9 @@ def main() -> None:
     # Clean command
     clean_parser = subparsers.add_parser("clean", help="Clean downloaded data files")
     clean_parser.add_argument(
+        "repo", nargs="?", help="Repository to clean (if not specified, cleans all)"
+    )
+    clean_parser.add_argument(
         "--yes", "-y", action="store_true", help="Skip confirmation prompt"
     )
     clean_parser.set_defaults(func=cmd_clean)
@@ -269,10 +287,7 @@ def main() -> None:
         "validate", help="Validate database integrity and completeness"
     )
     validate_parser.add_argument(
-        "repo",
-        nargs="?",
-        default="jupyterlab/jupyterlab",
-        help="Repository to validate",
+        "repo", help="Repository to validate (e.g., 'owner/repo')"
     )
     validate_parser.add_argument(
         "--delete-invalid",
@@ -286,7 +301,7 @@ def main() -> None:
         "tui", help="Browse database interactively with Terminal UI"
     )
     tui_parser.add_argument(
-        "repo", nargs="?", default="jupyterlab/jupyterlab", help="Repository to browse"
+        "repo", help="Repository to browse (e.g., 'owner/repo')"
     )
     tui_parser.set_defaults(func=cmd_tui)
 

@@ -4,27 +4,58 @@
 from pathlib import Path
 from typing import Any
 
-from tinydb import Query, TinyDB
-from tinyrecord import transaction
 from BetterJSONStorage import BetterJSONStorage
 from blosc2 import compress
 from orjson import dumps
+from tinydb import Query, TinyDB
+from tinyrecord import transaction
 
 
 class FixedBetterJSONStorage(BetterJSONStorage):
-    """BetterJSONStorage with fix for blosc2 typesize issue."""
-    
+    """BetterJSONStorage with fix for blosc2 typesize issue and backup protection."""
+
     def _BetterJSONStorage__file_writer(self):
-        """Fixed file writer that uses typesize=None to avoid the compression error."""
+        """Fixed file writer that uses typesize=None and creates backup before truncate."""
         self._shutdown_lock.acquire()
         while self._running:
             if self._changed:
                 self._changed = False
-                self._handle.seek(0)
-                self._handle.truncate()
-                # Fix: Use typesize=None to avoid the "multiple of typesize (8)" error
-                self._handle.write(compress(dumps(self._data, **self._dump_kwargs), typesize=None))
-                self._handle.flush()
+
+                # Create backup before truncating
+                import shutil
+                backup_path = str(self._handle.name) + '.backup'
+                try:
+                    if hasattr(self._handle, 'name') and Path(self._handle.name).exists():
+                        if Path(self._handle.name).stat().st_size > 0:
+                            shutil.copy2(self._handle.name, backup_path)
+                except (OSError, AttributeError):
+                    pass  # Continue without backup if copy fails
+
+                try:
+                    self._handle.seek(0)
+                    self._handle.truncate()
+                    # Fix: Use typesize=None to avoid the "multiple of typesize (8)" error
+                    self._handle.write(compress(dumps(self._data, **self._dump_kwargs), typesize=None))
+                    self._handle.flush()
+
+                    # Remove backup on successful write
+                    try:
+                        if Path(backup_path).exists():
+                            Path(backup_path).unlink()
+                    except OSError:
+                        pass
+
+                except Exception as e:
+                    # Restore from backup on write failure
+                    try:
+                        if Path(backup_path).exists():
+                            shutil.copy2(backup_path, self._handle.name)
+                            Path(backup_path).unlink()
+                    except (OSError, AttributeError):
+                        pass
+                    # Re-raise the original exception
+                    raise e
+
         self._shutdown_lock.release()
 
 from rich_issue_mcp.config import get_data_directory
@@ -45,14 +76,32 @@ def get_database(repo: str) -> TinyDB:
     # Use cached instance if available
     if repo in _database_cache:
         return _database_cache[repo]
-    
+
     db_path = get_database_path(repo)
     db_path.parent.mkdir(exist_ok=True)
     db = TinyDB(db_path, access_mode="r+", storage=FixedBetterJSONStorage)
-    
+
     # Cache the database instance
     _database_cache[repo] = db
     return db
+
+
+def convert_numpy_types(obj: Any) -> Any:
+    """Recursively convert NumPy types to Python native types for JSON serialization."""
+    import numpy as np
+    
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [convert_numpy_types(item) for item in obj]
+    else:
+        return obj
 
 
 def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
@@ -63,6 +112,9 @@ def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
             f"Invalid repo name '{repo}': should be 'owner/repo', not a file path"
         )
 
+    # Convert NumPy types to Python native types for JSON serialization
+    serializable_issues = [convert_numpy_types(issue) for issue in issues]
+
     db = get_database(repo)
 
     # Clear existing data first
@@ -70,7 +122,14 @@ def save_issues(repo: str, issues: list[dict[str, Any]]) -> None:
 
     # Insert all new issues in a transaction
     with transaction(db) as tr:
-        tr.insert_multiple(issues)
+        tr.insert_multiple(serializable_issues)
+    
+    # Force close to flush BetterJSONStorage background writer
+    db.close()
+    
+    # Remove from cache since we closed it
+    if repo in _database_cache:
+        del _database_cache[repo]
 
 
 def load_issues(repo: str) -> list[dict[str, Any]]:

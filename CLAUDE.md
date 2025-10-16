@@ -58,9 +58,21 @@ rich_issue_mcp pull jupyterlab/jupyterlab --refetch
 rich_issue_mcp enrich jupyterlab/jupyterlab
 
 # 3. Start MCP server for database access
-rich_issue_mcp mcp &
+rich_issue_mcp mcp jupyterlab/jupyterlab
 
-# 4. Clean data files when needed
+# 4. Browse database interactively
+rich_issue_mcp tui jupyterlab/jupyterlab
+
+# 5. Visualize issue clusters
+rich_issue_mcp visualize jupyterlab/jupyterlab
+
+# 6. Validate database integrity
+rich_issue_mcp validate jupyterlab/jupyterlab
+
+# 7. Clean specific repository data
+rich_issue_mcp clean jupyterlab/jupyterlab
+
+# 8. Clean all repository data
 rich_issue_mcp clean
 ```
 

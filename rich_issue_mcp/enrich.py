@@ -4,15 +4,16 @@
 import hashlib
 import json
 import re
-from collections import Counter
 from datetime import datetime
 from typing import Any
 
+import hdbscan
 import numpy as np
 import pandas as pd
 import requests
-from scipy.cluster.hierarchy import dendrogram, fcluster, linkage
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import normalize
 
 from rich_issue_mcp.config import get_cache
 
@@ -526,122 +527,551 @@ def add_k4_distances(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return issues
 
 
+
+
 def extract_cluster_keywords_llm(issues_in_cluster: list[dict[str, Any]], api_key: str | None, model: str = "mistral-large-latest") -> list[str]:
     """Extract representative keywords for a cluster of issues using LLM."""
     if not api_key or len(issues_in_cluster) == 0:
         return []
-    
+
     # Create a summary of the cluster using only titles, limit to 500 issues
     titles = []
     for issue in issues_in_cluster[:500]:
         title = issue.get("title", "")
         if title:
             titles.append(title)
-    
+
     if not titles:
         return []
-    
+
     titles_text = "\n".join(titles)
-    
+
     prompt = f"""Analyze these GitHub issue titles and extract 5-8 representative keywords that capture the main themes and topics. Return only the keywords as a comma-separated list, no explanations.
 
 Issue titles:
 {titles_text}
 
 Keywords:"""
-    
+
     response = get_mistral_completion(prompt, api_key, model)
     if response:
         # Parse keywords from response
         keywords = [k.strip() for k in response.split(",") if k.strip()]
         return keywords[:8]  # Limit to 8 keywords
-    
+
     return []
 
 
-def perform_hierarchical_clustering(issues: list[dict[str, Any]], api_key: str | None = None, distance_threshold: float = 0.3) -> list[dict[str, Any]]:
-    """Perform hierarchical clustering on all issues using their embeddings."""
+def extract_condensed_tree_taxonomy(clusterer: hdbscan.HDBSCAN, issues_with_embeddings: list[dict[str, Any]], min_cluster_size: int = 5) -> dict[str, Any]:
+    """Extract hierarchical taxonomy from HDBSCAN condensed tree."""
+    if not hasattr(clusterer, 'condensed_tree_'):
+        return {}
+
+    condensed_tree = clusterer.condensed_tree_
+
+    # Get the condensed tree data as a pandas DataFrame for easier analysis
+    tree_df = condensed_tree.to_pandas()
+
+    # Separate split nodes from persistence nodes
+    # Split nodes are where a cluster splits into multiple children
+    # Persistence nodes are where cluster size reduces without splitting
+
+    # Group by parent to identify splits vs persistence
+    parent_groups = tree_df.groupby('parent')
+
+    taxonomy = {}
+    split_nodes = set()
+    persistence_nodes = set()
+
+    # Identify split vs persistence nodes
+    for parent_id, group in parent_groups:
+        children = group['child'].unique()
+        if len(children) > 1:
+            # This parent has multiple children - it's a split node
+            split_nodes.add(parent_id)
+        else:
+            # Single child - persistence node
+            persistence_nodes.add(parent_id)
+
+    # Find leaf clusters (final clusters that appear in cluster_labels)
+    cluster_labels = clusterer.labels_
+    leaf_clusters = set(cluster_labels[cluster_labels >= 0])
+
+    # Build taxonomy by traversing from root
+    root_cluster = tree_df['parent'].max()  # Root is typically the largest cluster ID
+
+    def get_descendant_leaves(node_id: int) -> set[int]:
+        """Get all leaf cluster IDs that are descendants of this node."""
+        descendants = set()
+
+        def traverse_descendants(current_node: int):
+            children_df = tree_df[tree_df['parent'] == current_node]
+            if children_df.empty:
+                # This is a leaf
+                if current_node in leaf_clusters:
+                    descendants.add(current_node)
+                return
+
+            for child_id in children_df['child'].unique():
+                traverse_descendants(child_id)
+
+        traverse_descendants(node_id)
+        return descendants
+
+    def get_cluster_issues(cluster_id: int) -> list[dict[str, Any]]:
+        """Get issues belonging to a specific cluster."""
+        if cluster_id in leaf_clusters:
+            # For leaf clusters, use the final cluster assignments
+            issue_indices = [i for i, label in enumerate(cluster_labels) if label == cluster_id]
+        else:
+            # For internal nodes, get all issues from descendant leaf clusters
+            descendant_leaves = get_descendant_leaves(cluster_id)
+            issue_indices = []
+            for leaf_id in descendant_leaves:
+                leaf_indices = [i for i, label in enumerate(cluster_labels) if label == leaf_id]
+                issue_indices.extend(leaf_indices)
+
+        return [issues_with_embeddings[i] for i in issue_indices if i < len(issues_with_embeddings)]
+
+    def traverse_tree(node_id: int, path: list[str], level: int) -> None:
+        """Recursively traverse the condensed tree to build taxonomy."""
+        if level > 10:  # Prevent infinite recursion
+            return
+
+        # Get children of this node
+        children_df = tree_df[tree_df['parent'] == node_id]
+
+        if children_df.empty:
+            # Leaf node
+            issues = get_cluster_issues(node_id)
+            if issues:
+                features = extract_cluster_features_hdbscan(issues, node_id)
+                taxonomy[node_id] = {
+                    'name': features['name'],
+                    'keywords': features['keywords'],
+                    'issues': [issue['number'] for issue in issues],
+                    'path': path + [features['name']],
+                    'level': level,
+                    'node_type': 'leaf',
+                    'size': len(issues)
+                }
+            return
+
+        # Check if this is a split node
+        children = children_df['child'].unique()
+
+        if node_id in split_nodes and len(children) > 1:
+            # Split node - create taxonomy entry and recurse to children
+            # Get representative sample for this level
+            issues = get_cluster_issues(node_id)
+
+            # For better representativeness, sample from the most stable part of the cluster
+            # before the split (last persistence node before this split)
+            if len(issues) > 50:  # If we have many issues, sample strategically
+                # Sample proportionally from each child cluster to maintain diversity
+                sampled_issues = []
+                issues_per_child = min(20, len(issues) // len(children))
+
+                for child_id in children:
+                    child_issues = get_cluster_issues(child_id)
+                    if child_issues:
+                        # Take a representative sample from this child
+                        sample_size = min(issues_per_child, len(child_issues))
+                        sampled_issues.extend(child_issues[:sample_size])
+
+                issues = sampled_issues[:60]  # Limit total sample size
+
+            if issues:
+                features = extract_cluster_features_hdbscan(issues, node_id)
+                node_name = features['name']
+
+                taxonomy[node_id] = {
+                    'name': node_name,
+                    'keywords': features['keywords'],
+                    'issues': [issue['number'] for issue in issues],
+                    'path': path + [node_name],
+                    'level': level,
+                    'node_type': 'split',
+                    'children': list(children),
+                    'size': len(issues)
+                }
+
+                # Recurse to children
+                for child_id in children:
+                    traverse_tree(child_id, path + [node_name], level + 1)
+
+        elif len(children) == 1:
+            # Persistence node - skip and continue to child
+            child_id = children[0]
+            traverse_tree(child_id, path, level)
+
+    # Start traversal from root
+    traverse_tree(root_cluster, ['all'], 0)
+
+    return taxonomy
+
+
+def print_taxonomy_tree(taxonomy: dict[str, Any]) -> None:
+    """Print the full taxonomy as a tree structure."""
+    if not taxonomy:
+        print("📋 No taxonomy available")
+        return
+
+    print("🌳 Full Taxonomy Tree:")
+
+    # Build parent-child relationships
+    children_map = {}
+    root_nodes = []
+
+    for node_id, node_info in taxonomy.items():
+        level = node_info.get('level', 0)
+        children = node_info.get('children', [])
+
+        # Track children relationships
+        if children:
+            children_map[node_id] = children
+
+        # Root nodes are at level 0
+        if level == 0:
+            root_nodes.append(node_id)
+
+    def print_node(node_id: int, prefix: str = "", is_last: bool = True) -> None:
+        """Recursively print tree nodes with proper tree formatting."""
+        if node_id not in taxonomy:
+            return
+
+        node_info = taxonomy[node_id]
+        name = node_info.get('name', f'node_{node_id}')
+        size = node_info.get('size', 0)
+        node_type = node_info.get('node_type', 'unknown')
+        keywords = node_info.get('keywords', [])[:3]  # Show top 3 keywords
+        path = '.'.join(node_info.get('path', []))
+
+        # Tree formatting
+        connector = "└── " if is_last else "├── "
+
+        # Format node information
+        keywords_str = f" [{', '.join(keywords)}]" if keywords else ""
+        type_indicator = {"split": "🔀", "leaf": "🍃", "unknown": "❓"}.get(node_type, "❓")
+
+        print(f"{prefix}{connector}{type_indicator} {name} ({size} issues){keywords_str}")
+        print(f"{prefix}{'    ' if is_last else '│   '}    └─ Path: {path}")
+
+        # Print children
+        children = children_map.get(node_id, [])
+        if children:
+            # Sort children by size (descending)
+            children_with_info = []
+            for child_id in children:
+                if child_id in taxonomy:
+                    child_size = taxonomy[child_id].get('size', 0)
+                    children_with_info.append((child_id, child_size))
+
+            children_with_info.sort(key=lambda x: x[1], reverse=True)
+            sorted_children = [child_id for child_id, _ in children_with_info]
+
+            for i, child_id in enumerate(sorted_children):
+                is_last_child = (i == len(sorted_children) - 1)
+                new_prefix = prefix + ("    " if is_last else "│   ")
+                print_node(child_id, new_prefix, is_last_child)
+
+    # Print from root nodes
+    for i, root_id in enumerate(sorted(root_nodes)):
+        is_last_root = (i == len(root_nodes) - 1)
+        print_node(root_id, "", is_last_root)
+
+    print()  # Add spacing after tree
+
+
+def create_taxonomy_paths(taxonomy: dict[str, Any]) -> dict[int, str]:
+    """Create dot-separated taxonomy paths for each issue."""
+    issue_paths = {}
+
+    for _node_id, node_info in taxonomy.items():
+        path_components = node_info.get('path', [])
+        # Clean up path components to create valid taxonomy names
+        clean_components = []
+        for component in path_components:
+            # Clean the component name
+            clean_name = re.sub(r'[^a-zA-Z0-9]', '_', component.lower())
+            clean_name = re.sub(r'_+', '_', clean_name)  # Remove multiple underscores
+            clean_name = clean_name.strip('_')  # Remove leading/trailing underscores
+            if clean_name and clean_name != 'cluster':  # Skip empty or generic names
+                clean_components.append(clean_name)
+
+        if clean_components:
+            taxonomy_path = '.'.join(clean_components)
+
+            # Assign this path to all issues in this node
+            for issue_number in node_info.get('issues', []):
+                # Only assign if we don't have a path yet, or this is a deeper (more specific) path
+                if issue_number not in issue_paths or len(clean_components) > len(issue_paths[issue_number].split('.')):
+                    issue_paths[issue_number] = taxonomy_path
+
+    return issue_paths
+
+
+def extract_cluster_features_hdbscan(issues_in_cluster: list[dict[str, Any]], cluster_id: int) -> dict[str, Any]:
+    """Extract representative features for an HDBSCAN cluster using TF-IDF."""
+    if not issues_in_cluster:
+        return {
+            'name': f'cluster_{cluster_id}',
+            'keywords': [],
+            'size': 0
+        }
+
+    # Combine titles and bodies for text analysis
+    def get_text(issue):
+        title = issue.get('title', '') or ''
+        body = issue.get('body', '') or ''
+        return f"{title} {body}".strip()
+
+    cluster_texts = [get_text(issue) for issue in issues_in_cluster]
+    cluster_texts = [text for text in cluster_texts if text]
+
+    if not cluster_texts:
+        return {
+            'name': f'cluster_{cluster_id}',
+            'keywords': [],
+            'size': len(issues_in_cluster)
+        }
+
+    try:
+        # Simple keyword extraction using TF-IDF
+        vectorizer = TfidfVectorizer(
+            max_features=100,
+            stop_words='english',
+            ngram_range=(1, 2),
+            min_df=1,
+            max_df=0.8,
+            lowercase=True,
+            token_pattern=r'\b[a-zA-Z][a-zA-Z]+\b'
+        )
+
+        tfidf_matrix = vectorizer.fit_transform(cluster_texts)
+        feature_names = vectorizer.get_feature_names_out()
+
+        # Get average TF-IDF scores across all documents in cluster
+        avg_scores = tfidf_matrix.mean(axis=0).A1
+
+        # Get top keywords
+        top_indices = avg_scores.argsort()[-10:][::-1]
+        keywords = [feature_names[i] for i in top_indices if avg_scores[i] > 0]
+
+        # Create cluster name from top keywords
+        name = '_'.join(keywords[:3]) if keywords else f'cluster_{cluster_id}'
+        name = re.sub(r'[^a-zA-Z0-9_]', '_', name)[:30]
+
+        return {
+            'name': name or f'cluster_{cluster_id}',
+            'keywords': keywords[:8],
+            'size': len(issues_in_cluster)
+        }
+
+    except Exception as e:
+        print(f"⚠️  Feature extraction failed for cluster {cluster_id}: {e}")
+        return {
+            'name': f'cluster_{cluster_id}',
+            'keywords': [],
+            'size': len(issues_in_cluster)
+        }
+
+
+def perform_hdbscan_clustering(issues: list[dict[str, Any]], api_key: str | None = None, min_cluster_size: int = 5, min_samples: int = 3) -> list[dict[str, Any]]:
+    """Perform HDBSCAN clustering on all issues using their embeddings."""
     # Filter issues with embeddings (cluster all of them)
     issues_with_embeddings = [
         issue for issue in issues if issue.get("embedding") is not None
     ]
-    
-    if len(issues_with_embeddings) < 2:
-        print("⚠️  Not enough issues with embeddings for clustering")
+
+    if len(issues_with_embeddings) < min_cluster_size:
+        print(f"⚠️  Not enough issues with embeddings for clustering (need at least {min_cluster_size})")
         # Add empty cluster info to all issues
         for issue in issues:
-            issue["cluster_id"] = None
+            issue["cluster_id"] = -1  # HDBSCAN uses -1 for noise
             issue["cluster_size"] = None
             issue["cluster_keywords"] = []
         return issues
-    
-    print(f"🔍 Performing hierarchical clustering on {len(issues_with_embeddings)} issues with embeddings...")
-    
+
+    print(f"🔍 Performing HDBSCAN clustering on {len(issues_with_embeddings)} issues with embeddings...")
+    print(f"  Parameters: min_cluster_size={min_cluster_size}, min_samples={min_samples}")
+
     # Extract embeddings
     embeddings = np.array([issue["embedding"] for issue in issues_with_embeddings])
-    
-    # Perform hierarchical clustering using cosine distance
-    linkage_matrix = linkage(embeddings, method='ward', metric='euclidean')
-    
-    # Get cluster assignments using distance threshold
-    cluster_labels = fcluster(linkage_matrix, distance_threshold, criterion='distance')
-    
-    # Create mapping from issue number to cluster info
-    cluster_map = {}
-    issue_clusters = {}  # cluster_id -> list of issues
-    
-    for i, issue in enumerate(issues_with_embeddings):
-        cluster_id = int(cluster_labels[i])
-        issue_num = issue["number"]
-        cluster_map[issue_num] = cluster_id
+
+    # Normalize embeddings for cosine-like distance using euclidean metric
+    # This is equivalent to cosine distance for unit vectors
+    embeddings_normalized = normalize(embeddings, norm='l2')
+
+    # Perform HDBSCAN clustering
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        metric='euclidean',  # Euclidean on normalized vectors = cosine distance
+        cluster_selection_method='eom'  # Excess of Mass for better cluster selection
+    )
+
+    cluster_labels = clusterer.fit_predict(embeddings_normalized)
+
+    # Plot the condensed tree for visualization
+    try:
+        print("📈 Plotting HDBSCAN condensed tree...")
+        import matplotlib.pyplot as plt
         
-        if cluster_id not in issue_clusters:
-            issue_clusters[cluster_id] = []
-        issue_clusters[cluster_id].append(issue)
-    
-    # Extract keywords for each cluster using LLM (limit to 500 issues per cluster)
-    cluster_keywords = {}
-    if api_key:
-        print("🔤 Extracting keywords for clusters using LLM...")
-        for cluster_id, cluster_issues in issue_clusters.items():
-            if len(cluster_issues) >= 2:  # Only extract keywords for clusters with 2+ issues
-                keywords = extract_cluster_keywords_llm(cluster_issues, api_key)
-                cluster_keywords[cluster_id] = keywords
-            else:
-                cluster_keywords[cluster_id] = []
-    
+        # Create the condensed tree plot
+        fig, ax = plt.subplots(figsize=(12, 8))
+        clusterer.condensed_tree_.plot(select_clusters=True, selection_palette=['red', 'blue', 'green', 'orange', 'purple'], ax=ax)
+        plt.title('HDBSCAN Condensed Tree')
+        plt.tight_layout()
+        
+        # Save the plot
+        plot_path = 'hdbscan_condensed_tree.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"📊 Condensed tree plot saved to: {plot_path}")
+        plt.close()
+        
+        # Also create a simplified tree plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        clusterer.condensed_tree_.plot(ax=ax)
+        plt.title('HDBSCAN Condensed Tree (Full)')
+        plt.tight_layout()
+        
+        plot_path_full = 'hdbscan_condensed_tree_full.png'
+        plt.savefig(plot_path_full, dpi=300, bbox_inches='tight')
+        print(f"📊 Full condensed tree plot saved to: {plot_path_full}")
+        plt.close()
+        
+        # Print condensed tree statistics
+        print(f"🔍 Condensed Tree Analysis:")
+        print(f"  Tree size: {len(clusterer.condensed_tree_.to_pandas())}")
+        print(f"  Cluster persistence: {clusterer.cluster_persistence_}")
+        print(f"  Probabilities range: {clusterer.probabilities_.min():.3f} - {clusterer.probabilities_.max():.3f}")
+        
+        # Show the raw condensed tree data (first few rows)
+        tree_df = clusterer.condensed_tree_.to_pandas()
+        print(f"📋 Condensed Tree Data (first 10 rows):")
+        print(tree_df.head(10).to_string())
+        
+    except ImportError:
+        print("⚠️  matplotlib not available for plotting")
+    except Exception as e:
+        print(f"⚠️  Error creating condensed tree plot: {e}")
+
+    # Group issues by cluster
+    clusters = {}
+    noise_issues = []
+
+    for i, label in enumerate(cluster_labels):
+        if label == -1:  # Noise points
+            noise_issues.append(issues_with_embeddings[i])
+        else:
+            if label not in clusters:
+                clusters[label] = []
+            clusters[label].append(issues_with_embeddings[i])
+
+    # Extract features for each cluster
+    cluster_features = {}
+    for cluster_id, cluster_issues in clusters.items():
+        features = extract_cluster_features_hdbscan(cluster_issues, cluster_id)
+        cluster_features[cluster_id] = features
+
+    # Extract hierarchical taxonomy from condensed tree
+    print("🌳 Extracting hierarchical taxonomy from condensed tree...")
+    taxonomy = extract_condensed_tree_taxonomy(clusterer, issues_with_embeddings, min_cluster_size)
+
+    # Create taxonomy paths for each issue
+    issue_taxonomy_paths = create_taxonomy_paths(taxonomy)
+
+    # Create mapping from issue number to cluster info
+    issue_cluster_map = {}
+
+    # Add cluster information for clustered issues
+    for cluster_id, cluster_issues in clusters.items():
+        features = cluster_features[cluster_id]
+        for issue in cluster_issues:
+            issue_num = issue["number"]
+            issue_cluster_map[issue_num] = {
+                'cluster_id': cluster_id,
+                'cluster_name': features['name'],
+                'cluster_keywords': features['keywords'],
+                'cluster_size': features['size'],
+                'taxonomy_path': issue_taxonomy_paths.get(issue_num, 'all.uncategorized')
+            }
+
+    # Add noise information for noise issues
+    for issue in noise_issues:
+        issue_num = issue["number"]
+        issue_cluster_map[issue_num] = {
+            'cluster_id': -1,
+            'cluster_name': 'noise',
+            'cluster_keywords': [],
+            'cluster_size': len(noise_issues),
+            'taxonomy_path': 'all.noise'
+        }
+
     # Add cluster information to all issues
     for issue in issues:
         issue_num = issue["number"]
-        if issue_num in cluster_map:
-            cluster_id = cluster_map[issue_num]
-            issue["cluster_id"] = cluster_id
-            issue["cluster_size"] = len(issue_clusters[cluster_id])
-            issue["cluster_keywords"] = cluster_keywords.get(cluster_id, [])
+
+        if issue_num in issue_cluster_map:
+            cluster_info = issue_cluster_map[issue_num]
+            issue["cluster_id"] = cluster_info['cluster_id']
+            issue["cluster_name"] = cluster_info['cluster_name']
+            issue["cluster_keywords"] = cluster_info['cluster_keywords']
+            issue["cluster_size"] = cluster_info['cluster_size']
+            issue["taxonomy_path"] = cluster_info['taxonomy_path']
         else:
+            # Issues without embeddings
             issue["cluster_id"] = None
-            issue["cluster_size"] = None
+            issue["cluster_name"] = "no_embedding"
             issue["cluster_keywords"] = []
-    
+            issue["cluster_size"] = None
+            issue["taxonomy_path"] = "all.no_embedding"
+
     # Print clustering statistics
-    num_clusters = len(issue_clusters)
-    cluster_sizes = [len(issues) for issues in issue_clusters.values()]
-    avg_cluster_size = np.mean(cluster_sizes) if cluster_sizes else 0
-    
-    print(f"📊 Clustering results:")
+    num_clusters = len(clusters)
+    num_noise = len(noise_issues)
+    num_clustered = sum(len(cluster_issues) for cluster_issues in clusters.values())
+
+    print("📊 HDBSCAN Clustering Results:")
     print(f"  Number of clusters: {num_clusters}")
-    print(f"  Average cluster size: {avg_cluster_size:.1f}")
-    print(f"  Cluster sizes: {sorted(cluster_sizes, reverse=True)}")
+    print(f"  Clustered issues: {num_clustered}")
+    print(f"  Noise issues: {num_noise}")
+    print(f"  Issues without embeddings: {len(issues) - len(issues_with_embeddings)}")
     
-    # Print sample clusters with keywords
-    for cluster_id, cluster_issues in sorted(issue_clusters.items()):
-        if len(cluster_issues) >= 3:  # Only show clusters with 3+ issues
-            keywords = cluster_keywords.get(cluster_id, [])[:5]  # Top 5 keywords
-            sample_titles = [issue.get("title", "")[:50] for issue in cluster_issues[:3]]
-            print(f"  Cluster {cluster_id} ({len(cluster_issues)} issues): {', '.join(keywords)}")
-            for title in sample_titles:
-                print(f"    - {title}...")
-    
+    # Provide parameter tuning suggestions if clustering seems too conservative
+    if num_clusters < 5 and num_noise > num_clustered:
+        print("\n⚠️  Clustering seems conservative (few clusters, lots of noise).")
+        print("💡 Consider adjusting parameters:")
+        print(f"   - Reduce min_cluster_size (current: {min_cluster_size}) → try {max(3, min_cluster_size//2)}")
+        print(f"   - Reduce min_samples (current: {min_samples}) → try {max(1, min_samples//2)}")
+        print("   - Or use cluster_selection_method='leaf' for more granular clusters")
+
+    # Print cluster details
+    if clusters:
+        print("🔍 Cluster Details:")
+        sorted_clusters = sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)
+        for cluster_id, cluster_issues in sorted_clusters[:10]:  # Top 10 clusters
+            features = cluster_features[cluster_id]
+            keywords_str = ', '.join(features['keywords'][:5]) if features['keywords'] else 'no keywords'
+            print(f"  Cluster {cluster_id} ({len(cluster_issues)} issues): {features['name']}")
+            print(f"    Keywords: {keywords_str}")
+
+    # Print full taxonomy tree
+    if taxonomy:
+        print_taxonomy_tree(taxonomy)
+
+        # Show some example taxonomy paths
+        sample_paths = set()
+        for issue in issues[:20]:  # Sample from first 20 issues
+            if issue.get('taxonomy_path'):
+                sample_paths.add(issue['taxonomy_path'])
+
+        if sample_paths:
+            print("📋 Sample Taxonomy Paths:")
+            for path in sorted(sample_paths)[:10]:
+                print(f"    {path}")
+
     return issues
 
 
