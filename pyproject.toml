@@ -38,6 +38,7 @@ dependencies = [
     "tinyrecord>=0.2.0",
     "betterjsonstorage>=1.3.2",
     "scipy>=1.16.1",
+    "hdbscan>=0.8.40",
 ]
 
 [project.optional-dependencies]
