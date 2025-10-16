@@ -10,6 +10,7 @@ from rich_issue_mcp.enrich import (
     add_quartile_columns,
     add_summaries,
     enrich_issue,
+    perform_hierarchical_clustering,
     print_stats,
 )
 from rich_issue_mcp.mcp_server import run_mcp_server
@@ -66,6 +67,9 @@ def cmd_enrich(args) -> None:
 
     print("🔧 Computing k-4 nearest neighbor distances...")
     enriched = add_k4_distances(enriched)
+
+    print("🔍 Performing hierarchical clustering...")
+    enriched = perform_hierarchical_clustering(enriched, api_key)
 
     save_issues(args.repo, enriched)
     print("✅ Enriched issue database saved to TinyDB")

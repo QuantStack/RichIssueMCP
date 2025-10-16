@@ -100,7 +100,7 @@ def find_similar_issues(
 
 
 @mcp.tool()
-def find_linked_issues(
+def find_cross_referenced_issues(
     issue_number: int, repo: str | None = None, status: str | None = None
 ) -> list[dict[str, Any]]:
     """Find cross-referenced issues from the target issue. Optionally filter by status (open/closed)."""
@@ -135,38 +135,6 @@ def find_linked_issues(
     return cross_refs
 
 
-@mcp.tool()
-def get_issue_metrics(
-    issue_number: int, repo: str | None = None, status: str | None = None
-) -> dict[str, Any] | None:
-    """Get enrichment metrics for a specific issue. Optionally filter by status (open/closed)."""
-    repo = _get_repo_name(repo)
-    issues = load_issues(repo)
-    issue = next((i for i in issues if i["number"] == issue_number), None)
-
-    if not issue:
-        return None
-
-    # Filter by status if specified
-    if status:
-        issue_state = issue.get("state", "").lower()
-        if status.lower() == "open" and issue_state != "open":
-            return None
-        elif status.lower() == "closed" and issue_state != "closed":
-            return None
-
-    return {
-        "priority_score": issue.get("priority_score", 0),
-        "frequency_score": issue.get("frequency_score", 0),
-        "severity_score": issue.get("severity_score", 0),
-        "comment_count": issue.get("comment_count", 0),
-        "total_reactions": issue.get("total_reactions", 0),
-        "positive_reactions": issue.get("positive_reactions", 0),
-        "negative_reactions": issue.get("negative_reactions", 0),
-        "age_days": issue.get("age_days", 0),
-        "has_embedding": issue.get("embedding") is not None,
-        "state": issue.get("state"),
-    }
 
 
 @mcp.tool()
@@ -320,8 +288,8 @@ def add_recommendation(
     affected_packages: list[str],
     affected_paths: list[str],
     affected_components: list[str],
-    related_issues: list[int],
     merge_with: list[int],
+    relevant_issues: list[dict[str, Any]] | None = None,
     reviewer: str = "ai",
     model_version: str | None = None,
     repo: str | None = None,
@@ -371,14 +339,15 @@ def add_recommendation(
         errors.append("affected_components must be a list")
     elif not all(isinstance(comp, str) for comp in affected_components):
         errors.append("affected_components must be a list of strings")
-    if not isinstance(related_issues, list):
-        errors.append("related_issues must be a list")
-    elif not all(isinstance(issue_id, int) for issue_id in related_issues):
-        errors.append("related_issues must be a list of integers")
     if not isinstance(merge_with, list):
         errors.append("merge_with must be a list")
     elif not all(isinstance(issue_id, int) for issue_id in merge_with):
         errors.append("merge_with must be a list of integers")
+    if relevant_issues is not None:
+        if not isinstance(relevant_issues, list):
+            errors.append("relevant_issues must be a list")
+        elif not all(isinstance(item, dict) and "number" in item and "title" in item and "url" in item for item in relevant_issues):
+            errors.append("relevant_issues must be a list of dictionaries with keys: number, title, url")
 
     if errors:
         return {"status": "error", "message": "Validation failed", "errors": errors}
@@ -421,8 +390,8 @@ def add_recommendation(
             "affected_packages": affected_packages,
             "affected_paths": affected_paths,
             "affected_components": affected_components,
-            "related_issues": related_issues,
             "merge_with": merge_with,
+            "relevant_issues": relevant_issues or [],
         },
         "meta": {
             "reviewer": reviewer,
@@ -572,17 +541,25 @@ def get_recommendation_schema() -> dict[str, Any]:
                         "description": "UI/system components affected",
                         "example": ["NotebookPanel", "CodeCell"]
                     },
-                    "related_issues": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": "Related issue numbers",
-                        "example": [42, 123]
-                    },
                     "merge_with": {
                         "type": "array",
                         "items": {"type": "integer"},
                         "description": "Issue numbers to merge with (for close_merge action)",
                         "example": [456]
+                    },
+                    "relevant_issues": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "number": {"type": "integer"},
+                                "title": {"type": "string"},
+                                "url": {"type": "string"}
+                            },
+                            "required": ["number", "title", "url"]
+                        },
+                        "description": "Relevant issues identified via cross-references and similar issues",
+                        "example": [{"number": 789, "title": "Related keyboard issue", "url": "https://github.com/owner/repo/issues/789"}]
                     }
                 }
             },
@@ -632,8 +609,8 @@ def get_recommendation_schema() -> dict[str, Any]:
                 "affected_packages": ["@jupyterlab/notebook"],
                 "affected_paths": ["packages/notebook/src/widget.ts:142-156", "packages/notebook/src/panel.ts:89"],
                 "affected_components": ["NotebookPanel"],
-                "related_issues": [789],
-                "merge_with": [123]
+                "merge_with": [123],
+                "relevant_issues": [{"number": 789, "title": "Related keyboard issue", "url": "https://github.com/jupyterlab/jupyterlab/issues/789"}]
             },
             "meta": {
                 "reviewer": "ai",

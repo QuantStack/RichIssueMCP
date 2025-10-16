@@ -3,12 +3,15 @@
 
 import hashlib
 import json
+import re
+from collections import Counter
 from datetime import datetime
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import requests
+from scipy.cluster.hierarchy import dendrogram, fcluster, linkage
 from sklearn.neighbors import NearestNeighbors
 
 from rich_issue_mcp.config import get_cache
@@ -523,13 +526,134 @@ def add_k4_distances(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return issues
 
 
+def extract_cluster_keywords_llm(issues_in_cluster: list[dict[str, Any]], api_key: str | None, model: str = "mistral-large-latest") -> list[str]:
+    """Extract representative keywords for a cluster of issues using LLM."""
+    if not api_key or len(issues_in_cluster) == 0:
+        return []
+    
+    # Create a summary of the cluster using only titles, limit to 500 issues
+    titles = []
+    for issue in issues_in_cluster[:500]:
+        title = issue.get("title", "")
+        if title:
+            titles.append(title)
+    
+    if not titles:
+        return []
+    
+    titles_text = "\n".join(titles)
+    
+    prompt = f"""Analyze these GitHub issue titles and extract 5-8 representative keywords that capture the main themes and topics. Return only the keywords as a comma-separated list, no explanations.
+
+Issue titles:
+{titles_text}
+
+Keywords:"""
+    
+    response = get_mistral_completion(prompt, api_key, model)
+    if response:
+        # Parse keywords from response
+        keywords = [k.strip() for k in response.split(",") if k.strip()]
+        return keywords[:8]  # Limit to 8 keywords
+    
+    return []
+
+
+def perform_hierarchical_clustering(issues: list[dict[str, Any]], api_key: str | None = None, distance_threshold: float = 0.3) -> list[dict[str, Any]]:
+    """Perform hierarchical clustering on all issues using their embeddings."""
+    # Filter issues with embeddings (cluster all of them)
+    issues_with_embeddings = [
+        issue for issue in issues if issue.get("embedding") is not None
+    ]
+    
+    if len(issues_with_embeddings) < 2:
+        print("⚠️  Not enough issues with embeddings for clustering")
+        # Add empty cluster info to all issues
+        for issue in issues:
+            issue["cluster_id"] = None
+            issue["cluster_size"] = None
+            issue["cluster_keywords"] = []
+        return issues
+    
+    print(f"🔍 Performing hierarchical clustering on {len(issues_with_embeddings)} issues with embeddings...")
+    
+    # Extract embeddings
+    embeddings = np.array([issue["embedding"] for issue in issues_with_embeddings])
+    
+    # Perform hierarchical clustering using cosine distance
+    linkage_matrix = linkage(embeddings, method='ward', metric='euclidean')
+    
+    # Get cluster assignments using distance threshold
+    cluster_labels = fcluster(linkage_matrix, distance_threshold, criterion='distance')
+    
+    # Create mapping from issue number to cluster info
+    cluster_map = {}
+    issue_clusters = {}  # cluster_id -> list of issues
+    
+    for i, issue in enumerate(issues_with_embeddings):
+        cluster_id = int(cluster_labels[i])
+        issue_num = issue["number"]
+        cluster_map[issue_num] = cluster_id
+        
+        if cluster_id not in issue_clusters:
+            issue_clusters[cluster_id] = []
+        issue_clusters[cluster_id].append(issue)
+    
+    # Extract keywords for each cluster using LLM (limit to 500 issues per cluster)
+    cluster_keywords = {}
+    if api_key:
+        print("🔤 Extracting keywords for clusters using LLM...")
+        for cluster_id, cluster_issues in issue_clusters.items():
+            if len(cluster_issues) >= 2:  # Only extract keywords for clusters with 2+ issues
+                keywords = extract_cluster_keywords_llm(cluster_issues, api_key)
+                cluster_keywords[cluster_id] = keywords
+            else:
+                cluster_keywords[cluster_id] = []
+    
+    # Add cluster information to all issues
+    for issue in issues:
+        issue_num = issue["number"]
+        if issue_num in cluster_map:
+            cluster_id = cluster_map[issue_num]
+            issue["cluster_id"] = cluster_id
+            issue["cluster_size"] = len(issue_clusters[cluster_id])
+            issue["cluster_keywords"] = cluster_keywords.get(cluster_id, [])
+        else:
+            issue["cluster_id"] = None
+            issue["cluster_size"] = None
+            issue["cluster_keywords"] = []
+    
+    # Print clustering statistics
+    num_clusters = len(issue_clusters)
+    cluster_sizes = [len(issues) for issues in issue_clusters.values()]
+    avg_cluster_size = np.mean(cluster_sizes) if cluster_sizes else 0
+    
+    print(f"📊 Clustering results:")
+    print(f"  Number of clusters: {num_clusters}")
+    print(f"  Average cluster size: {avg_cluster_size:.1f}")
+    print(f"  Cluster sizes: {sorted(cluster_sizes, reverse=True)}")
+    
+    # Print sample clusters with keywords
+    for cluster_id, cluster_issues in sorted(issue_clusters.items()):
+        if len(cluster_issues) >= 3:  # Only show clusters with 3+ issues
+            keywords = cluster_keywords.get(cluster_id, [])[:5]  # Top 5 keywords
+            sample_titles = [issue.get("title", "")[:50] for issue in cluster_issues[:3]]
+            print(f"  Cluster {cluster_id} ({len(cluster_issues)} issues): {', '.join(keywords)}")
+            for title in sample_titles:
+                print(f"    - {title}...")
+    
+    return issues
+
+
 def print_stats(enriched: list[dict[str, Any]]) -> None:
     """Print statistics about enriched issues."""
     total = len(enriched)
     with_embeddings = sum(1 for issue in enriched if issue.get("embedding") is not None)
     with_summaries = sum(1 for issue in enriched if issue.get("summary") is not None)
+    with_clusters = sum(1 for issue in enriched if issue.get("cluster_id") is not None)
 
     print("📊 Statistics:")
     print(f"  Total issues: {total}")
     print(f"  With embeddings: {with_embeddings}")
     print(f"  With summaries: {with_summaries}")
+    print(f"  With clusters: {with_clusters}")

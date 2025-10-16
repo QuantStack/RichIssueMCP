@@ -108,10 +108,9 @@ Use Rich Issue MCP tools for efficient issue management:
 - `mcp__rich_issue_mcp__get_first_issue_without_recommendation` - Find next untriaged issue
 
 **Gather Comprehensive Data:**
-- `mcp__rich_issue_mcp__get_issue` - Full conversation and summary
-- `mcp__rich_issue_mcp__get_issue_metrics` - Engagement metrics and quartile rankings
+- `mcp__rich_issue_mcp__get_issue` - Full conversation, summary, and all metrics
 - `mcp__rich_issue_mcp__find_similar_issues` - Related issues for context
-- `mcp__rich_issue_mcp__find_linked_issues` - Direct issue references
+- `mcp__rich_issue_mcp__find_cross_referenced_issues` - Direct issue references
 
 **Additional Tools:**
 - `mcp__rich_issue_mcp__get_available_sort_columns` - List sortable columns
@@ -146,7 +145,7 @@ Evaluate using JupyterLab architecture knowledge:
 - Alignment with existing patterns and architectural decisions
 
 Use the deepwiki mcp if available to answer these in addition to your own
-research (only ask a single question).
+research (only ask a single question). 
 
 ### 4. Final Recommendation
 
@@ -161,7 +160,8 @@ research (only ask a single question).
 
 ### 5. Update Issue Database
 
-Use Rich Issue MCP to add assessment recommendations with structured markdown format:
+Use Rich Issue MCP to add assessment recommendations with structured markdown
+format. Don't mention Deepwiki in the report:
 
 ```
 mcp__rich_issue_mcp__add_recommendation
@@ -204,11 +204,22 @@ mcp__rich_issue_mcp__add_recommendation
 - **Components**: {List UI/system components or "None"}
 
 ## Context
-{Any relevant information, similar issues, community engagement}
+
+**Related Issues**: {Include both cross-referenced and similar issues, but only if they:
+- Provide additional context for understanding this issue
+- Indicate a similar underlying need, pointing to a common solution
+- Are duplicates or overlapping with this issue
+Include issue numbers, titles, urls and how they relate. Omit this section if no issues meet these criteria}
+
+**Community Engagement**: {Discussion activity, user feedback, maintainer comments}
 
 ## Final Recommendation: **{recommendation_value}**
 
 **Rationale**: {Detailed explanation of the recommendation decision}
+
+**Merge With**: {For close_merge recommendations, list issue numbers to merge with or "None"}
+
+**Follow-up Questions**: {For needs_more_info recommendations, list specific questions to ask the reporter or "None"}
 ```
 
 Required parameters:
@@ -226,12 +237,12 @@ Required parameters:
 - `affected_packages` - List of package names that would need modification (list of strings)
 - `affected_paths` - List of file or directory paths, optionally with line numbers using GitHub syntax (list of strings)
 - `affected_components` - List of UI/system components that would be affected (list of strings)
-- `related_issues` - List of related issue numbers (list of integers)
 - `merge_with` - List of issue numbers to merge with (for close_merge recommendation) (list of integers)
+- `relevant_issues` - List of relevant issues with number, title, and url (list of dictionaries, optional)
 
 Optional parameters:
 - `reviewer` - Who made the recommendation (string, defaults to "ai")
-- `model_version` - Model version used for analysis (string)
+- `model_version` - Model version used for analysis (string, defaults to None)
 - `repo` - Repository name (string, defaults to "jupyterlab/jupyterlab")
 
 This workflow ensures consistent, thorough evaluation of each issue while leveraging both quantitative metrics and qualitative JupyterLab expertise.

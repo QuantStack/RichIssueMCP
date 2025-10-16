@@ -26,7 +26,7 @@ The system consists of several Python modules under `rich_issue_mcp/`:
 
 - **rich_issue_mcp/mcp_server.py**: FastMCP server providing database access tools
   - Serves enriched issue data to AI agents
-  - Tools: get_issue, find_similar_issues, find_linked_issues, get_issue_metrics
+  - Tools: get_issue, find_similar_issues, find_cross_referenced_issues, get_issue_metrics
 
 - **rich_issue_mcp/cli.py**: CLI orchestration module
   - Unified `rich_issue_mcp` command with subcommands

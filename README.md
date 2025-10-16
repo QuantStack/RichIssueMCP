@@ -50,7 +50,7 @@ rich_issue_mcp clean
 ### 3. MCP Server (`rich_issue_mcp/mcp/`)
 - FastMCP server providing database access tools
 - Serves enriched issue data to AI agents
-- Tools: get_issue, find_similar_issues, find_linked_issues, get_issue_metrics, get_top_issues
+- Tools: get_issue, find_similar_issues, find_cross_referenced_issues, get_issue_metrics, get_top_issues
 
 ### 4. CLI Orchestration (`rich_issue_mcp/cli/`)
 - Python CLI for coordinating all components
