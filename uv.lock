@@ -327,6 +327,15 @@ wheels = [
 ]
 
 [[package]]
+name = "couchdb"
+version = "1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/c8/f94a107eca0c178e5d74c705dad1a5205c0f580840bd1b155cd8a258cb7c/CouchDB-1.2.tar.gz", hash = "sha256:1386a1a43f25bed3667e3b805222054940d674fa1967fa48e9d2012a18630ab7", size = 65880, upload-time = "2018-02-09T13:12:52.727Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ff/35/6660f7526c5d509b13264b27642de73754bd3d0addf56b175601c8b951e1/CouchDB-1.2-py2.py3-none-any.whl", hash = "sha256:13a28a1159c49f8346732e8724b9a4d65cba54bec017c4a7eeb1499fe88151d1", size = 67954, upload-time = "2018-02-09T13:12:50.581Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "45.0.7"
 source = { registry = "https://pypi.org/simple" }
@@ -1820,6 +1829,7 @@ name = "rich-issue-mcp"
 source = { editable = "." }
 dependencies = [
     { name = "betterjsonstorage" },
+    { name = "couchdb" },
     { name = "diskcache" },
     { name = "fastmcp" },
     { name = "hdbscan" },
@@ -1850,6 +1860,7 @@ dev = [
 requires-dist = [
     { name = "betterjsonstorage", specifier = ">=1.3.2" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
+    { name = "couchdb", specifier = ">=1.2" },
     { name = "diskcache", specifier = ">=5.6.3" },
     { name = "fastmcp", specifier = ">=0.4.0" },
     { name = "hdbscan", specifier = ">=0.8.40" },
